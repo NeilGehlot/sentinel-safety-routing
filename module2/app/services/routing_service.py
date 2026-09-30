@@ -76,9 +76,8 @@ class RoutingService:
         """
 
         if not settings.ors_api_key:
-            raise RoutingServiceError(
-                "OpenRouteService is not configured: ORS_API_KEY is missing"
-            )
+            log.warning("ORS_API_KEY missing; returning local mock routes")
+            return self._mock(start, end)
 
         try:
             routes = self._ors(start, end)
@@ -208,6 +207,22 @@ class RoutingService:
     # --------------------------------------------------------
     # ROUTE OBJECT CREATOR
     # --------------------------------------------------------
+
+    def _mock(self, start, end):
+        """Local fallback: three curved paths with different detours, used only without ORS_API_KEY."""
+        from app.services.geo import path_length
+        (a_lat, a_lon), (b_lat, b_lon) = start, end
+        d_lat, d_lon = b_lat - a_lat, b_lon - a_lon
+        routes = []
+        for bend, speed in ((0.0, 9.0), (0.18, 10.0), (-0.3, 11.5)):
+            geom = []
+            for i in range(41):
+                t = i / 40
+                off = bend * 4 * t * (1 - t)
+                geom.append([a_lat + d_lat * t - d_lon * off, a_lon + d_lon * t + d_lat * off])
+            dist = max(path_length(geom), 1.0)
+            routes.append(self._mk(geom=geom, dist=dist, dur=dist / speed * (1 + abs(bend)), src="mock"))
+        return routes
 
     @staticmethod
     def _mk(geom, dist, dur, src):

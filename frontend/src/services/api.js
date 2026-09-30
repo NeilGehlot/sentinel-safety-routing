@@ -8,6 +8,8 @@ export const api = {
   inject: (journey_id) => post('/api/demo/inject-incident', { journey_id }),
   switchTo: (id, alt) => post(`/api/navigation/${id}/switch`, { alternative_route_id: alt }),
   dismiss: (id) => post(`/api/navigation/${id}/dismiss`),
+  stop: (id) => post(`/api/navigation/${id}/stop`),
+  geocode: (q) => fetch(`/api/routes/geocode?q=${encodeURIComponent(q)}`).then(j),
   getGuardianSettings: () => fetch('/settings/guardians').then(j),
   saveGuardianSettings: (body) => post('/settings/guardians', body),
   startSafetyMonitor: (body) => post('/journeys/start', body),

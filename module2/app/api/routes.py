@@ -21,6 +21,19 @@ def search(req: SearchRequest):
         r["recommended"] = r is best
     return {"routes": found, "module1_threat": current_threat(*s)}
 
+@router.get("/geocode")
+def geocode(q: str):
+    """Free-text place search via Nominatim; empty list if unreachable so the UI can fall back."""
+    import httpx
+    try:
+        res = httpx.get("https://nominatim.openstreetmap.org/search",
+                        params={"q": q, "format": "json", "limit": 5, "viewbox": "75.6,27.1,76.0,26.7"},
+                        headers={"User-Agent": "sentinel-safety-routing/0.1"}, timeout=8)
+        res.raise_for_status()
+        return [{"name": p["display_name"], "latitude": float(p["lat"]), "longitude": float(p["lon"])} for p in res.json()]
+    except (httpx.HTTPError, ValueError, KeyError):
+        return []
+
 @router.post("/recalculate")
 def recalc(req: RecalcRequest):
     if req.journey_id not in store.journeys:
