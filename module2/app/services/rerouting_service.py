@@ -9,8 +9,14 @@ def evaluate(routing, current, progress_m, position, dest, incidents):
     remaining_min = (current["distance_m"] - progress_m)/speed/60
     res = {"current_safety": cur["safety"], "base_safety": cur["base_safety"], "effects": eff,
            "factors": cur["factors"], "remaining_min": remaining_min, "recommended": False,
-           "alternative": None, "reasons": []}
-    if not eff or cur["safety"] >= settings.critical:
+           "alternative": None, "reasons": [], "why_not": []}
+    if not eff:
+        res["why_not"] = ["No active incident is affecting the current route."]
+        return res
+    if cur["safety"] >= settings.critical:
+        res["why_not"] = [
+            f"Current route safety is {cur['safety']:.0f}/100, above the rerouting threshold."
+        ]
         return res
     best = None
     for r in routing.routes(position, dest):
@@ -20,6 +26,7 @@ def evaluate(routing, current, progress_m, position, dest, incidents):
         if best is None or r["safety"] > best["safety"]:
             best = r
     if not best:
+        res["why_not"] = ["No usable alternative route was available."]
         return res
     improve = best["safety"] - cur["safety"]
     extra = best["eta_min"] - remaining_min
@@ -35,4 +42,15 @@ def evaluate(routing, current, progress_m, position, dest, incidents):
             f"Current safety: {cur['base_safety']:.0f} → {cur['safety']:.0f}",
             f"Alternative improves safety by {improve:.0f} points",
             f"Alternative adds {max(extra, 0):.0f} minutes"]
+    else:
+        if improve < settings.min_improve:
+            res["why_not"].append(
+                f"Safety improvement is only {improve:.0f} points; "
+                f"at least {settings.min_improve:.0f} is required."
+            )
+        if extra > settings.max_extra:
+            res["why_not"].append(
+                f"The alternative adds {extra:.1f} minutes; "
+                f"the limit is {settings.max_extra:.1f}."
+            )
     return res

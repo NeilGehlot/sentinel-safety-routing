@@ -8,10 +8,10 @@ cd module2 && pip install -r requirements.txt && cp .env.example .env
 uvicorn app.main:app --reload          # http://localhost:8000/docs
 cd frontend && npm install && npm run dev
 ```
-Env vars: see `module2/.env.example` (export them or use your shell; `ORS_API_KEY` optional — without it synthetic demo routes are used). Frontend poll: `VITE_POLLING_INTERVAL_SECONDS` (default 10).
+Env vars: see `module2/.env.example` (export them or use your shell; `ORS_API_KEY` is required for real road-following routes). Frontend poll: `VITE_POLLING_INTERVAL_SECONDS` (default 10).
 
 ## Demo
-Search → pick route → Start journey → **Demo: inject accident 600 m ahead** → reroute card → Switch. Works fully offline.
+Search → pick route → **START ROUTE** → **Demo: inject accident 600 m ahead** → reroute card → Switch. ORS connectivity and an API key are required for route search.
 Journey movement is simulated (`SIM_SPEED`, default 2×).
 
 ## Tests
