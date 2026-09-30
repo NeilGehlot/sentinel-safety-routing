@@ -1,0 +1,223 @@
+@property --pct { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --tone { syntax: "<color>"; inherits: true; initial-value: #16A34A; }
+
+:root {
+  --bg: #FAFAFA;
+  --surface: #FFFFFF;
+  --border: #E5E7EB;
+  --text: #111827;
+  --muted: #6B7280;
+  --on: #FFFFFF;
+  --chip-on: #111827;
+  --safe: #16A34A;
+  --caution: #CA8A04;
+  --high: #EA580C;
+  --critical: #DC2626;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111111;
+    --surface: #1A1A1A;
+    --border: #2E2E2E;
+    --text: #F3F4F6;
+    --muted: #9CA3AF;
+    --on: #111111;
+    --chip-on: #F3F4F6;
+    --shadow: none;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; max-width: 100%; overflow-x: hidden; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.45 system-ui, sans-serif;
+}
+:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+#stage { position: relative; width: 100%; height: 65dvh; }
+#map { height: 100%; width: 100%; margin: 0; border-radius: 0; }
+header h1 { margin: 0; font-size: 22px; }
+header p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+.dock { margin: 16px 16px 0; min-width: 0; }
+.dock-form { margin-bottom: 32px; }
+.sheet { min-width: 0; }
+.tab { display: none; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 20px;
+  min-width: 0;
+}
+fieldset { border: 0; margin: 16px 0 0; padding: 0; }
+legend { color: var(--muted); margin-bottom: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: inherit;
+  cursor: pointer;
+  transition: background 150ms, color 150ms;
+}
+.chip.on { background: var(--chip-on); color: var(--on); border-color: var(--chip-on); }
+.leaflet-container { height: 100%; font: inherit; }
+.leaflet-top.leaflet-left {
+  top: auto;
+  bottom: 12px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+}
+#locate, #net, .battery { margin-top: 16px; }
+.battery { display: block; color: var(--muted); }
+input[type="range"] { width: 100%; margin-top: 8px; accent-color: var(--text); }
+.ring {
+  --pct: 0;
+  --tone: var(--safe);
+  width: 156px;
+  height: 156px;
+  margin: 4px auto 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: conic-gradient(var(--tone) calc(var(--pct) * 1%), var(--border) 0);
+  transition: --pct 400ms linear, --tone 400ms linear;
+}
+.ring span {
+  width: 116px;
+  height: 116px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  color: var(--tone);
+  font-size: 42px;
+  font-weight: 650;
+  transition: color 400ms;
+}
+.horizons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.horizon {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 16px;
+}
+.horizon h2 { margin: 0; font-size: 14px; color: var(--muted); font-weight: 600; }
+.horizon p { margin: 6px 0 0; font-size: 28px; }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.factor {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 6px 12px;
+  font-size: 14px;
+}
+.factor::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+.factor.raise::before { background: var(--critical); }
+.factor.lower::before { background: var(--safe); }
+.soft {
+  margin: 16px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+}
+#tips { margin: 12px 0 0; padding-left: 18px; }
+#tips:empty { display: none; }
+.error { color: var(--text); }
+#refresh { margin-top: 16px; }
+.skeleton { display: grid; gap: 12px; justify-items: center; }
+.skeleton[hidden], #result[hidden], .error[hidden] { display: none; }
+.sh { border-radius: 16px; background: var(--border); }
+.sh.circle { width: 156px; height: 156px; border-radius: 50%; }
+.sh.line { width: 100%; height: 18px; }
+.sh.short { width: 70%; }
+
+@media (min-width: 900px) {
+  body { height: 100dvh; overflow: hidden; }
+  #stage { position: fixed; inset: 0; width: 100vw; height: 100dvh; z-index: 0; }
+  .dock { margin: 0; pointer-events: none; z-index: 500; }
+  .dock-form { margin: 0; }
+  .sheet, .tab { pointer-events: auto; }
+  .sheet {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    transition: transform 200ms ease;
+  }
+  .dock .card { background: transparent; border: 0; box-shadow: none; border-radius: 0; }
+  .dock-left {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    bottom: 16px;
+    width: 340px;
+  }
+  .dock-left .sheet {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .dock-left header { flex: none; padding: 14px 16px 0; }
+  .dock-left #form { flex: 1; min-height: 0; overflow: auto; }
+  .dock-left.is-out .sheet { transform: translateX(calc(-100% - 16px)); }
+  .dock-right {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    width: 320px;
+    max-height: calc(100dvh - 32px);
+  }
+  .dock-right .sheet { max-height: calc(100dvh - 32px); overflow: auto; }
+  .dock-right.is-out .sheet { transform: translateX(calc(100% + 16px)); }
+  .tab {
+    display: grid;
+    place-items: center;
+    position: absolute;
+    top: 50%;
+    width: 22px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .tab::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+  }
+  .dock-left .tab { left: -11px; transform: translateY(-50%); }
+  .dock-left .tab::before { transform: rotate(135deg); }
+  .dock-left.is-out .tab { transform: translate(-5px, -50%); }
+  .dock-left.is-out .tab::before { transform: rotate(-45deg); }
+  .dock-right .tab { right: -11px; transform: translateY(-50%); }
+  .dock-right .tab::before { transform: rotate(-45deg); }
+  .dock-right.is-out .tab { transform: translate(5px, -50%); }
+  .dock-right.is-out .tab::before { transform: rotate(135deg); }
+  .leaflet-bottom.leaflet-right { right: auto; left: 50%; bottom: 52px; transform: translateX(-50%); }
+}
