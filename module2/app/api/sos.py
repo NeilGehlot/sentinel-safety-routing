@@ -348,9 +348,19 @@ def record_signal(req: SignalEventRequest):
     elif req.signal_type == "MOVEMENT_RESUMED":
         risk = update_risk(journey, "MOVEMENT_RESUMED", reason="Normal movement resumed", delta=-10)
     elif req.signal_type == "SAFE":
+        emergency_id = journey.pop("emergency_id", None)
+        if emergency_id and emergency_id in store.emergencies:
+            store.emergencies[emergency_id]["status"] = "RESOLVED"
+            store.emergencies[emergency_id]["risk_score"] = 0
+            store.emergencies[emergency_id]["risk_level"] = "LOW"
+            store.emergencies[emergency_id]["trigger_reasons"] = ["User confirmed safe"]
         _reset_journey_risk_window(journey)
-        journey["status"] = "JOURNEY_ACTIVE"
-        risk = update_risk(journey, "SAFE")
+        journey["status"] = "IDLE"
+        journey["trigger_reasons"] = []
+        store.sos_journeys.pop(req.journey_id, None)
+        return {"journey_id": req.journey_id, "risk_score": 0, "risk_level": "LOW",
+                "trigger_reasons": [], "countdown_required": False, "countdown_seconds": 0,
+                "status": "IDLE"}
     else:
         risk = compute_risk(journey)
 

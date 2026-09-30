@@ -2,15 +2,19 @@
 import MapView from '../components/MapView.jsx'
 import { TimeProfileTable, DepartCompare, highRiskExposure, speedScore, routeScore, RouteCard, SelectedRouteSummary, RerouteCard, WhyNotCard, IncidentSummary, SafetyProfile, SafePointPanel, IndependencePanel, AnalysisPanel, JourneyStatus, LoadingState, ErrorState } from '../components/Parts.jsx'
 import { api, PLACES, POLL_MS } from '../services/api.js'
+import KEYWORDS from '../data/distress-keywords.json'
 
 const DEFAULT_START = { latitude: 26.9196, longitude: 75.7878 }
 const SAFE_KINDS = [['Police station', 'police'], ['Hospital', 'hospital'], ['24x7 pharmacy', 'pharmacy'], ['Metro station', 'transit'], ['Fuel station', 'fuel']]
-const safePointsFor = (route) => {
+const safePointsFor = (route, center) => {
   const g = route?.geometry || []
-  if (g.length < 2) return []
+  if (g.length < 2 && !center) return []
+  if (g.length < 2) return SAFE_KINDS.map(([name, kind], n) => {
+    const angle = n * Math.PI * 2 / SAFE_KINDS.length
+    return { name: `${name} ${n + 1}`, kind, latitude: center.latitude + Math.sin(angle) * .004, longitude: center.longitude + Math.cos(angle) * .004 }
+  })
   return SAFE_KINDS.map(([name, kind], n) => { const p = g[Math.floor((g.length - 1) * (n + 1) / (SAFE_KINDS.length + 1))]; const o = (n % 2 ? 1 : -1) * .0012; return { name: `${name} ${n + 1}`, kind, latitude: p[0] + o, longitude: p[1] - o } })
 }
-const KEYWORDS = ['help', 'bachao', 'save me', 'emergency', 'mujhe bachao', 'stop', 'leave me alone', "don't touch me", 'call the police']
 
 const normalizeText = (value = '') => value.toLowerCase().replace(/\s+/g, ' ').trim()
 const keywordMatch = (value = '') => KEYWORDS.some((keyword) => normalizeText(value).includes(normalizeText(keyword)))
@@ -375,11 +379,15 @@ export default function Home() {
     const payload = await run(() => api.signal({ journey_id: sosJourney.journey_id, signal_type, latitude: start.latitude, longitude: start.longitude, emotion }))
     if (payload) {
       if (signal_type === 'SAFE') {
-        setSosStatus({ ...payload, status: 'JOURNEY_ACTIVE', risk_score: 0, risk_level: 'LOW', countdown_required: false, countdown_seconds: 0 })
+        stopVoiceMonitoring()
+        setSosJourney(null)
+        setSosStatus(null)
         setCountdownOpen(false)
         setCountdownSeconds(0)
         countdownTriggeredRef.current = true
-        setSosNotice('Status reset to safe. SOS cleared.')
+        setLiveTranscript('')
+        setMapMode('safety')
+        setSosNotice('')
         return
       }
       if (payload?.status === 'EMERGENCY_ACTIVE') {
@@ -387,7 +395,8 @@ export default function Home() {
         setCountdownOpen(false)
         setCountdownSeconds(0)
         countdownTriggeredRef.current = true
-        setSosNotice('SOS ACTIVATED — Help contacted and is on the way.')
+        setMapMode('safepoints')
+        setSosNotice('SOS ACTIVATED - Help contacted and is on the way.')
         return
       }
       setSosStatus(payload)
@@ -406,22 +415,34 @@ export default function Home() {
     }
   }
 
-  const createEmergency = async (triggerType) => {
-    if (!sosJourney || sosStatus?.status === 'EMERGENCY_ACTIVE') return
+  const createEmergency = async (triggerType, journey = sosJourney) => {
+    if (!journey || sosStatus?.status === 'EMERGENCY_ACTIVE') return
     stopVoiceMonitoring()
     const recipients = validGuardianEmails.length ? validGuardianEmails.join(', ') : 'guardian contacts'
-    const payload = await run(() => api.createEmergency({ journey_id: sosJourney.journey_id, trigger_type: triggerType, latitude: start.latitude, longitude: start.longitude }))
+    const payload = await run(() => api.createEmergency({ journey_id: journey.journey_id, trigger_type: triggerType, latitude: start.latitude, longitude: start.longitude }))
     if (payload) {
       setSosStatus({ ...payload, status: 'EMERGENCY_ACTIVE', risk_score: 0, risk_level: 'LOW', countdown_required: false, countdown_seconds: 0 })
-      setSosNotice(`SOS ACTIVATED — help contacted and is on the way. Alerts sent to ${recipients}.`)
+      setSosNotice(`SOS ACTIVATED - help contacted and is on the way. Alerts sent to ${recipients}.`)
       setCountdownOpen(false)
       setCountdownSeconds(0)
       countdownTriggeredRef.current = true
+      setMapMode('safepoints')
       shareGuardianLocation()
     }
   }
 
   const triggerManualSos = () => createEmergency('MANUAL')
+  const triggerTopBarSos = async () => {
+    if (!ensureGuardiansConfigured() || isEmergencyActive) return
+    if (sosJourney) {
+      await createEmergency('MANUAL')
+      return
+    }
+    const journey = await run(() => api.startSafetyMonitor({ user_name: 'Demo User', latitude: start.latitude, longitude: start.longitude }))
+    if (!journey) return
+    setSosJourney(journey)
+    await createEmergency('MANUAL', journey)
+  }
 
   const escalateToEmergency = () => createEmergency('AUTO')
 
@@ -430,7 +451,6 @@ export default function Home() {
   const riskDisplayValue = Number(sosStatus?.risk_score ?? 0)
 
   const handleSafeResponse = async () => {
-    if (sosStatus?.status === 'EMERGENCY_ACTIVE') return
     setCountdownOpen(false)
     setCountdownSeconds(0)
     countdownTriggeredRef.current = true
@@ -491,7 +511,7 @@ export default function Home() {
   const activeRoute = st ? { id: st.route_id, geometry: st.geometry, safety: st.safety, factors: st.factors, distance_m: st.distance_m, progress_m: st.progress_m, eta_min: st.eta_min, incident_count: st.incidents_ahead.length } : selectedRoute
   const navItems = [{ icon: '⌂', label: 'Home' }, { icon: '⚙', label: 'Settings' }]
   const scoredRoutes = routes.map((r) => ({ ...r, high_risk_min: highRiskExposure(r, incidents).minutes, route_score: routeScore(r.safety, speedScore(r, minEta), preference), recommended: r.id === pickByPreference(routes, preference) }))
-  const safePoints = safePointsFor(activeRoute)
+  const safePoints = safePointsFor(activeRoute, isEmergencyActive ? start : null)
   const departAt = departMode === 'Custom' ? departTime : undefined
   const shown = st ? [{ id: st.route_id, geometry: st.geometry }] : routes
 
@@ -562,7 +582,7 @@ export default function Home() {
       <div className="sidebar-foot"><div className="avatar">A</div><div><b>Aarav</b><small>Stay safe.</small></div><span className="more">•••</span></div>
     </aside>
     <main className="workspace">
-      <header className="topbar"><div><span className="eyebrow">Safety-first navigation</span><h1>{jid ? 'Live journey' : 'Safe route planner'}</h1></div><div className="top-actions"><span className="status-chip"><span className="live-dot" />{jid ? 'Journey active' : 'Ready to plan'}</span><button type="button" className="sos-top-button" onClick={sosJourney ? triggerManualSos : startSafetyJourney} disabled={isEmergencyActive} title={sosJourney ? "Send manual SOS" : "Activate safety monitor"}>SOS</button><button className="icon-button">?</button></div></header>
+      <header className="topbar"><div><span className="eyebrow">Safety-first navigation</span><h1>{jid ? 'Live journey' : 'Safe route planner'}</h1></div><div className="top-actions"><span className="status-chip"><span className="live-dot" />{jid ? 'Journey active' : 'Ready to plan'}</span><button type="button" className="sos-top-button" onClick={triggerTopBarSos} disabled={isEmergencyActive} title="Send manual SOS">SOS</button><button className="icon-button">?</button></div></header>
       <section className="panel sos-panel">
         <div className="panel-heading">
           <div><span className="eyebrow">04 · Intelligent SOS</span><h2>Safety monitor</h2></div>
