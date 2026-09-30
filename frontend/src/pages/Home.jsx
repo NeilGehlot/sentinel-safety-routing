@@ -1,6 +1,6 @@
 ﻿import { useEffect, useRef, useState } from 'react'
 import MapView from '../components/MapView.jsx'
-import { TimeProfileTable, speedScore, routeScore, RouteCard, SelectedRouteSummary, RerouteCard, WhyNotCard, IncidentSummary, SafetyProfile, SafePointPanel, IndependencePanel, AnalysisPanel, JourneyStatus, LoadingState, ErrorState } from '../components/Parts.jsx'
+import { TimeProfileTable, DepartCompare, highRiskExposure, speedScore, routeScore, RouteCard, SelectedRouteSummary, RerouteCard, WhyNotCard, IncidentSummary, SafetyProfile, SafePointPanel, IndependencePanel, AnalysisPanel, JourneyStatus, LoadingState, ErrorState } from '../components/Parts.jsx'
 import { api, PLACES, POLL_MS } from '../services/api.js'
 
 const DEFAULT_START = { latitude: 26.9196, longitude: 75.7878 }
@@ -61,6 +61,7 @@ export default function Home() {
   const [isListening, setIsListening] = useState(false), [manualTranscript, setManualTranscript] = useState('help me')
   const [liveTranscript, setLiveTranscript] = useState('')
   const [activeNav, setActiveNav] = useState('Home')
+  const [departMode, setDepartMode] = useState('Now'), [departTime, setDepartTime] = useState('21:30'), [threat, setThreat] = useState(), [navCollapsed, setNavCollapsed] = useState(false)
   const [mapMode, setMapMode] = useState('safety'), [geoResults, setGeoResults] = useState([]), [geoBusy, setGeoBusy] = useState(false)
   const [currentPage, setCurrentPage] = useState('home')
   const [guardianEmails, setGuardianEmails] = useState([])
@@ -489,14 +490,27 @@ export default function Home() {
   const selectedRoute = routes.find((r) => r.id === sel)
   const activeRoute = st ? { id: st.route_id, geometry: st.geometry, safety: st.safety, factors: st.factors, distance_m: st.distance_m, progress_m: st.progress_m, eta_min: st.eta_min, incident_count: st.incidents_ahead.length } : selectedRoute
   const navItems = [{ icon: '⌂', label: 'Home' }, { icon: '⚙', label: 'Settings' }]
-  const scoredRoutes = routes.map((r) => ({ ...r, route_score: routeScore(r.safety, speedScore(r, minEta), preference), recommended: r.id === pickByPreference(routes, preference) }))
+  const scoredRoutes = routes.map((r) => ({ ...r, high_risk_min: highRiskExposure(r, incidents).minutes, route_score: routeScore(r.safety, speedScore(r, minEta), preference), recommended: r.id === pickByPreference(routes, preference) }))
   const safePoints = safePointsFor(activeRoute)
+  const departAt = departMode === 'Custom' ? departTime : undefined
+  const threatPoint = activeRoute?.geometry?.[Math.floor((activeRoute.geometry.length - 1) / 2)]
+  useEffect(() => {
+    if (!threatPoint) { setThreat(); return }
+    let live = true
+    const when = new Date(); if (departAt) { const [h, m] = departAt.split(':').map(Number); when.setHours(h, m, 0, 0) }
+    const off = -when.getTimezoneOffset(), pad = (n) => String(Math.floor(Math.abs(n))).padStart(2, '0')
+    const ts = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}:00${off >= 0 ? '+' : '-'}${pad(off / 60)}:${pad(off % 60)}`
+    setThreat({ loading: true })
+    api.assess({ session_id: 'route-' + (activeRoute.id || 'x'), timestamp: ts, location: { lat: threatPoint[0], lon: threatPoint[1], speed_mps: 1.4 }, device: { cellular_dbm: -95, internet_available: true, battery_pct: 80 }, movement: { activity: 'walking' }, nearby_devices: { wifi_count: 5, ble_count: 3 } })
+      .then((data) => live && setThreat({ data })).catch((e) => live && setThreat({ error: e.message || 'unreachable' }))
+    return () => { live = false }
+  }, [activeRoute?.id, threatPoint?.[0], threatPoint?.[1], departAt])
   const shown = st ? [{ id: st.route_id, geometry: st.geometry }] : routes
 
   if (currentPage === 'settings') {
-    return (<div className="dashboard settings-page-shell">
-      <aside className="sidebar">
-        <div className="brand"><span className="brand-mark">✦</span><div><strong>SENTINEL</strong><small>Safe navigation</small></div></div>
+    return (<div className={'dashboard settings-page-shell' + (navCollapsed ? ' nav-collapsed' : '')}>
+      <aside className={'sidebar' + (navCollapsed ? ' collapsed' : '')}>
+        <div className="brand"><span className="brand-mark">✦</span><div className="nav-text"><strong>SENTINEL</strong><small>Safe navigation</small></div><button type="button" className="collapse-toggle" onClick={() => setNavCollapsed((v) => !v)} title="Toggle sidebar">{navCollapsed ? '»' : '«'}</button></div>
         <nav className="sidebar-nav">{navItems.map(({ icon, label }) => (
           <button
             key={label}
@@ -507,7 +521,7 @@ export default function Home() {
               setCurrentPage(label === 'Settings' ? 'settings' : 'home')
             }}
           >
-            <span>{icon}</span>{label}
+            <span>{icon}</span><span className="nav-text">{label}</span>
           </button>
         ))}</nav>
         <div className="sidebar-foot"><div className="avatar">A</div><div><b>Aarav</b><small>Stay safe.</small></div><span className="more">•••</span></div>
@@ -541,9 +555,9 @@ export default function Home() {
     </div>)
   }
 
-  return (<div className="dashboard">
-    <aside className="sidebar">
-      <div className="brand"><span className="brand-mark">✦</span><div><strong>SENTINEL</strong><small>Safe navigation</small></div></div>
+  return (<div className={'dashboard' + (navCollapsed ? ' nav-collapsed' : '')}>
+    <aside className={'sidebar' + (navCollapsed ? ' collapsed' : '')}>
+      <div className="brand"><span className="brand-mark">✦</span><div className="nav-text"><strong>SENTINEL</strong><small>Safe navigation</small></div><button type="button" className="collapse-toggle" onClick={() => setNavCollapsed((v) => !v)} title="Toggle sidebar">{navCollapsed ? '»' : '«'}</button></div>
       <nav className="sidebar-nav">{navItems.map(({ icon, label }) => (
         <button
           key={label}
@@ -554,7 +568,7 @@ export default function Home() {
             setCurrentPage(label === 'Settings' ? 'settings' : 'home')
           }}
         >
-          <span>{icon}</span>{label}
+          <span>{icon}</span><span className="nav-text">{label}</span>
         </button>
       ))}</nav>
       <div className="sidebar-foot"><div className="avatar">A</div><div><b>Aarav</b><small>Stay safe.</small></div><span className="more">•••</span></div>
@@ -620,16 +634,16 @@ export default function Home() {
       </div>}
 
       <section className="search-panel">
-        <div className="search-fields"><label><span>From</span><div className="field"><span className="field-icon blue">⌖</span><input readOnly value={`${start.latitude.toFixed(4)}, ${start.longitude.toFixed(4)}`} /><button className="locate-button" onClick={locate} title="Use my location">◎</button></div></label><button className="swap-button" onClick={swapLocations} title="Swap locations">⇄</button><label><span>To</span>{destinationMode ? <div className="field destination-search"><span className="field-icon red">●</span><input autoFocus value={destinationQuery} onChange={(e) => typeDestination(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && geocode()} placeholder="Search any place..." /><button className="locate-button" onClick={geocode} title="Search">{geoBusy ? '…' : '⌕'}</button></div> : <div className="field"><span className="field-icon red">●</span><select value={dest.name} onChange={(e) => chooseDestination(e.target.value)}><option value="__search__">Search any place...</option>{!PLACES.some((p) => p.name === dest.name) && <option>{dest.name}</option>}{PLACES.map((p) => <option key={p.name}>{p.name}</option>)}</select></div>}{destinationMode && geoResults.length > 0 && <div className="geo-results">{geoResults.map((p) => <button key={p.name + p.latitude} type="button" onClick={() => pickDestination(p)}>{p.name}</button>)}</div>}{destinationMode && <small className="muted destination-note">Press Enter to search, or click the map to drop a destination pin.</small>}</label><label className="departure"><span>Depart at</span><div className="field"><span className="field-icon">◷</span><select defaultValue="Now"><option>Now</option><option>Today, later</option></select></div></label><button className="find-button" onClick={search} disabled={busy || Boolean(jid)}>{busy ? 'Finding…' : jid ? 'Route active' : destinationMode ? 'Search place' : 'Find Safe Routes'} <span>→</span></button></div>
-        <div className="preference"><span className="preference-icon">✦</span><div><b>Safety-Time Preference</b><small>Adjust how much you want to prioritise safety vs faster travel.</small></div><div className="preference-control"><span>Faster Travel</span><input type="range" min="0" max="100" value={preference} onChange={(e) => changePreference(e.target.value)} /><span>Safer Travel</span><div className="preference-labels"><small>Shorter time, higher risk</small><strong>{preference < 40 ? 'Faster Travel' : preference > 60 ? 'Safer Travel' : 'Balanced (Recommended)'}</strong><small>May take longer, higher safety</small></div></div></div>
+        <div className="search-fields"><label><span>From</span><div className="field"><span className="field-icon blue">⌖</span><input readOnly value={`${start.latitude.toFixed(4)}, ${start.longitude.toFixed(4)}`} /><button className="locate-button" onClick={locate} title="Use my location">◎</button></div></label><button className="swap-button" onClick={swapLocations} title="Swap locations">⇄</button><label><span>To</span>{destinationMode ? <div className="field destination-search"><span className="field-icon red">●</span><input autoFocus value={destinationQuery} onChange={(e) => typeDestination(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && geocode()} placeholder="Search any place..." /><button className="locate-button" onClick={geocode} title="Search">{geoBusy ? '…' : '⌕'}</button></div> : <div className="field"><span className="field-icon red">●</span><select value={dest.name} onChange={(e) => chooseDestination(e.target.value)}><option value="__search__">Search any place...</option>{!PLACES.some((p) => p.name === dest.name) && <option>{dest.name}</option>}{PLACES.map((p) => <option key={p.name}>{p.name}</option>)}</select></div>}{destinationMode && geoResults.length > 0 && <div className="geo-results">{geoResults.map((p) => <button key={p.name + p.latitude} type="button" onClick={() => pickDestination(p)}>{p.name}</button>)}</div>}{destinationMode && <small className="muted destination-note">Press Enter to search, or click the map to drop a destination pin.</small>}</label><label className="departure"><span>Depart at</span><div className="field"><span className="field-icon">◷</span><select value={departMode} onChange={(e) => setDepartMode(e.target.value)}><option>Now</option><option value="Custom">Custom time</option></select>{departMode === 'Custom' && <input type="time" className="depart-time" value={departTime} onChange={(e) => setDepartTime(e.target.value)} />}</div></label><button className="find-button" onClick={search} disabled={busy || Boolean(jid)}>{busy ? 'Finding…' : jid ? 'Route active' : destinationMode ? 'Search place' : 'Find Safe Routes'} <span>→</span></button></div>
+        {departAt && <DepartCompare route={activeRoute} time={departAt} preference={preference} minEta={minEta} />}<div className="preference"><span className="preference-icon">✦</span><div><b>Safety-Time Preference</b><small>Adjust how much you want to prioritise safety vs faster travel.</small></div><div className="preference-control"><span>Faster Travel</span><input type="range" min="0" max="100" value={preference} onChange={(e) => changePreference(e.target.value)} /><span>Safer Travel</span><div className="preference-labels"><small>Shorter time, higher risk</small><strong>{preference < 40 ? 'Faster Travel' : preference > 60 ? 'Safer Travel' : 'Balanced (Recommended)'}</strong><small>May take longer, higher safety</small></div></div></div>
       </section>
       {err && <ErrorState message={err} />}{busy && <LoadingState text="Finding real road routes…" />}
       <section className="dashboard-grid">
         <div className="route-column"><div className="section-heading"><div><span className="eyebrow">Route planning</span><h2>Route Options <em>{routes.length || (jid ? 1 : 0)}</em></h2></div><select className="sort-select" defaultValue="recommended"><option value="recommended">Recommended</option></select></div>{!jid && scoredRoutes.map((r) => <RouteCard key={r.id} r={r} selected={r.id === sel} onSelect={setSel} />)}{!jid && !routes.length && <div className="empty-card"><span className="empty-icon">⌁</span><b>Find a safe route</b><p>Choose your destination and compare real road routes.</p></div>}{jid && st && <JourneyStatus s={st} />}{!jid && sel && <><SelectedRouteSummary r={selectedRoute} /><button className="start-button" onClick={begin}>START ROUTE <span>→</span></button></>}{jid && st && <><div className="journey-actions">{st.reroute && <RerouteCard rr={st.reroute} onSwitch={doSwitch} onKeep={keep} />}{!st.reroute && st.status !== 'completed' && <WhyNotCard analysis={st.reroute_analysis} />}{note && <p className="muted">{note}</p>}{!st.incidents_ahead.length && st.status !== 'completed' && <p className="muted">No incidents ahead.</p>}<button className="demo-button" onClick={inject}>Demo: inject accident 600 m ahead</button><button className="start-button stop-button" onClick={stopRoute}>{st.status === 'completed' ? 'END ROUTE' : 'STOP ROUTE'} <span>■</span></button></div></>}</div>
         <div className="map-column"><div className="map-toolbar"><div className="map-tabs">{[['safety', '◉ Safety View'], ['safepoints', '⌖ Safe Points'], ['heatmap', '◌ Risk Heatmap'], ['time', '◷ Time Profile']].map(([k, label]) => <button type="button" key={k} className={mapMode === k ? 'active' : ''} onClick={() => setMapMode(k)}>{label}</button>)}</div><span className="map-expand">⛶</span></div><MapView routes={shown} selectedId={jid ? st?.route_id : sel} alt={st?.reroute?.alternative} incidents={st?.incidents_ahead || []} heatmapIncidents={incidents} position={gps || st?.position} start={start} dest={dest} mode={mapMode} safePoints={safePoints} onMapClick={mapClick} />{mapMode === 'time' && <div className="time-overlay panel"><b>Time profile for this area</b><TimeProfileTable route={activeRoute} preference={preference} minEta={minEta} /></div>}</div>
-        <div className="intel-column"><SafetyProfile route={activeRoute} preference={preference} minEta={minEta} /><SafePointPanel route={activeRoute} points={safePoints} /><IndependencePanel routes={routes} /><IncidentSummary incidents={incidents} /></div>
+        <div className="intel-column"><SafetyProfile route={activeRoute} preference={preference} minEta={minEta} /><SafePointPanel route={activeRoute} points={safePoints} /><IndependencePanel routes={routes} incidents={incidents} /><IncidentSummary incidents={incidents} /></div>
       </section>
-      <AnalysisPanel route={activeRoute} incidents={incidents} analysis={st?.reroute_analysis} />
+      <AnalysisPanel route={scoredRoutes.find((r) => r.id === activeRoute?.id) || activeRoute} incidents={incidents} analysis={st?.reroute_analysis} routes={routes} threat={threat} />
     </main>
   </div>)
 }

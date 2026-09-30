@@ -17,3 +17,29 @@
 .geo-results button{text-align:left;background:none;border:0;padding:6px 8px;font-size:12px;cursor:pointer;color:inherit}
 .geo-results button:hover{background:rgba(102,80,233,.1)}
 .stop-button{background:#ff4d4f !important;margin-top:8px}
+:root{--s1:8px;--s2:16px;--s3:24px;--s4:32px}
+.tone-red{color:#e24a55 !important}.tone-amber{color:#e99021 !important}.tone-green{color:#13a56b !important}
+.score.tone-red,.score.tone-amber,.score.tone-green{font-weight:700}
+.sidebar{transition:width .25s ease,flex-basis .25s ease,padding .25s ease}
+.brand{position:relative}
+.collapse-toggle{margin-left:auto;background:rgba(255,255,255,.1);color:#fff;border:0;border-radius:var(--s1);width:var(--s3);height:var(--s3);cursor:pointer;flex:0 0 auto}
+.sidebar.collapsed{width:72px;flex-basis:72px;padding:var(--s3) var(--s1)}
+.sidebar.collapsed .nav-text,.sidebar.collapsed .sidebar-foot div:not(.avatar),.sidebar.collapsed .more{display:none}
+.sidebar.collapsed .brand{flex-direction:column;gap:var(--s1)}
+.sidebar.collapsed .collapse-toggle{margin:0}
+.sidebar.collapsed .nav-item{justify-content:center}
+.route-card{padding:var(--s2);border-radius:var(--s2);margin-bottom:var(--s2)}
+.route-score-row{gap:var(--s2);align-items:center}
+.route-score-hero{min-width:96px}
+.route-score-hero strong{font-size:56px;line-height:1;font-weight:800;letter-spacing:-2px}
+.route-score-hero span{font-size:14px;font-weight:600;color:var(--muted)}
+.route-score-hero small{display:block;margin-top:var(--s1);font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+.route-score-row .metric-cell b{font-size:12px;font-weight:500}
+.panel{padding:var(--s2);border-radius:var(--s2)}
+.depart-time{margin-left:var(--s1);border:1px solid var(--line);border-radius:var(--s1);padding:4px var(--s1);font-size:12px}
+.depart-compare{margin:var(--s1) 0;padding:var(--s1) var(--s2);border-radius:var(--s1);background:rgba(96,72,232,.08);font-size:13px}
+.analysis-sections{display:flex;flex-direction:column;gap:var(--s1);margin-top:var(--s2)}
+.analysis-section{border:1px solid var(--line);border-radius:var(--s1);background:var(--surface)}
+.analysis-trigger{width:100%;display:flex;justify-content:space-between;padding:var(--s2);height:auto;font-weight:600}
+.analysis-content{padding:0 var(--s2) var(--s2)}
+.threat-score{font-size:24px;font-weight:800}
