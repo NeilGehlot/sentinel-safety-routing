@@ -7,6 +7,10 @@ export const api = {
   inject: (journey_id) => post('/api/demo/inject-incident', { journey_id }),
   switchTo: (id, alt) => post(`/api/navigation/${id}/switch`, { alternative_route_id: alt }),
   dismiss: (id) => post(`/api/navigation/${id}/dismiss`),
+  startSafetyMonitor: (body) => post('/journeys/start', body),
+  safetyStatus: (journey_id) => fetch(`/journeys/${journey_id}/status`).then(j),
+  signal: (body) => post('/signals', body),
+  createEmergency: (body) => post('/emergencies', body),
 }
 export const PLACES = [
   { name: 'Amber Fort', latitude: 26.9855, longitude: 75.8513 },

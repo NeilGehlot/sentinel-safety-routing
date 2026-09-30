@@ -3,6 +3,9 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 IncidentType = Literal["accident","road_closure","fire","flooding","protest","crime","traffic","other"]
+SignalType = Literal["MANUAL_SOS", "KEYWORD_DETECTED", "EMOTION_DETECTED", "FALL_DETECTED", "COUNTDOWN_EXPIRED", "SAFE", "MOVEMENT_RESUMED"]
+RiskLevel = Literal["LOW", "SUSPICIOUS", "HIGH", "CRITICAL"]
+TriggerType = Literal["MANUAL", "AUTO"]
 
 class LatLon(BaseModel):
     latitude: float = Field(ge=-90, le=90)
@@ -47,6 +50,35 @@ class InjectRequest(BaseModel):
     severity: float = 0.9
     ahead_meters: float = 600
     title: str = "Traffic accident ahead"
+
+class SosJourneyStartRequest(BaseModel):
+    user_name: Optional[str] = "User"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+class SignalEventRequest(BaseModel):
+    journey_id: str
+    signal_type: SignalType = "KEYWORD_DETECTED"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    accuracy: Optional[float] = None
+    emotion: Optional[str] = None
+    transcript: Optional[str] = None
+
+class EmergencyCreateRequest(BaseModel):
+    journey_id: Optional[str] = None
+    trigger_type: TriggerType = "MANUAL"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    accuracy: Optional[float] = None
+    user_name: Optional[str] = "User"
+
+class EmergencyResolveRequest(BaseModel):
+    reason: str = "SAFE"
+
+class EmailRetryRequest(BaseModel):
+    contact_id: Optional[str] = "1"
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
