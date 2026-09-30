@@ -11,3 +11,22 @@ class DemoIncidentSource:
 routes: dict = {}
 journeys: dict = {}
 incidents: list = DemoIncidentSource().fetch()
+
+# SOS prototype state
+sos_journeys: dict = {}
+emergencies: dict = {}
+guardian_settings: dict = {
+    "guardian_emails": [],
+    "location_update_interval_minutes": 5,
+    "emergency_contacts": [
+        {"label": "Police", "number": "112"},
+        {"label": "Emergency", "number": "108"},
+    ],
+    "emergency_profile": {
+        "name": "",
+        "address": "",
+        "blood_type": "",
+        "allergies": "",
+        "medical_conditions": "",
+    },
+}

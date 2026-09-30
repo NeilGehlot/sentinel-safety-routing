@@ -34,6 +34,10 @@ def switch(jid: str, req: SwitchRequest):
 def dismiss(jid: str):
     _j(jid); nav.dismiss(jid); return {"ok": True}
 
+@router.post("/navigation/{jid}/stop")
+def stop(jid: str):
+    _j(jid); store.journeys.pop(jid, None); return {"ok": True, "journey_id": jid, "status": "stopped"}
+
 @router.get("/navigation/{jid}/location")
 def location(jid: str):
     _j(jid); s = nav.status(jid)

@@ -4,3 +4,7 @@ pydantic
 httpx
 shapely
 pytest
+python-dotenv
+transformers
+torch
+soundfile

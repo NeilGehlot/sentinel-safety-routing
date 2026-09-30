@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.models.schemas import Incident, utcnow
 from app.services import route_matcher, rerouting_service as rs
+from app.services import store
 from app.services.geo import point_at
 from app.services.routing_service import RoutingService
 
@@ -55,3 +56,36 @@ def test_full_demo_flow():
     assert c.post("/api/incidents/report", json={"title": "x", "latitude": 26.9, "longitude": 75.8}).status_code == 200
     assert c.get(f"/api/navigation/{jid}/route-context").status_code == 200
     assert c.post("/api/routes/recalculate", json={"journey_id": jid}).status_code == 200
+
+def test_manual_sos_emails_guardians_and_safe_resets(monkeypatch):
+    from app.api import sos
+
+    previous_settings = store.guardian_settings
+    store.guardian_settings = {
+        "guardian_emails": ["one@example.com", "two@example.com"],
+        "location_update_interval_minutes": 5,
+        "emergency_contacts": [],
+        "emergency_profile": {},
+    }
+    sent = []
+    monkeypatch.setattr(sos, "_send_alert_email",
+                        lambda emergency, email: sent.append((emergency["id"], email)) or
+                        {"success": True, "recipient": email})
+    try:
+        started = c.post("/journeys/start", json={
+            "user_name": "Test User", "latitude": S[0], "longitude": S[1]
+        }).json()
+        jid = started["journey_id"]
+        emergency = c.post("/emergencies", json={
+            "journey_id": jid, "trigger_type": "MANUAL",
+            "latitude": S[0], "longitude": S[1],
+        })
+        assert emergency.status_code == 200
+        assert emergency.json()["email_status"] == "sent"
+        assert [email for _, email in sent] == ["one@example.com", "two@example.com"]
+        safe = c.post("/signals", json={"journey_id": jid, "signal_type": "SAFE"})
+        assert safe.json()["status"] == "IDLE"
+        assert jid not in store.sos_journeys
+        assert store.emergencies[emergency.json()["emergency_id"]]["status"] == "RESOLVED"
+    finally:
+        store.guardian_settings = previous_settings
