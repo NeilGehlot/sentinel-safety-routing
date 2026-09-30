@@ -76,8 +76,20 @@ class EmergencyCreateRequest(BaseModel):
 class EmergencyResolveRequest(BaseModel):
     reason: str = "SAFE"
 
-class EmailRetryRequest(BaseModel):
-    contact_id: Optional[str] = "1"
+class EmergencyResponse(BaseModel):
+    id: str
+    journey_id: str
+    trigger_type: TriggerType
+    user_name: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    accuracy: Optional[float] = None
+    created_at: str
+    status: str
+    risk_score: int
+    risk_level: str
+    trigger_reasons: list[str] = Field(default_factory=list)
+    events: list[dict] = Field(default_factory=list)
 
 class EmergencyContactEntry(BaseModel):
     label: str = "Emergency"

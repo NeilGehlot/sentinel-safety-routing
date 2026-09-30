@@ -87,8 +87,33 @@ class Settings:
     location_update_interval_ms: int = _int("LOCATION_UPDATE_INTERVAL_MS", 15000)
     emergency_location_update_interval_ms: int = _int("EMERGENCY_LOCATION_UPDATE_INTERVAL_MS", 3000)
     safety_countdown_seconds: int = _int("SAFETY_COUNTDOWN_SECONDS", 10)
-    escalation_delay_seconds: int = _int("ESCALATION_DELAY_SECONDS", 30)
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
+
+    # --------------------------------------------------------
+    # SMTP (guardian alert emails); EMAIL_* names are accepted as fallbacks
+    # --------------------------------------------------------
+
+    smtp_host: str = os.getenv("SMTP_HOST") or os.getenv("EMAIL_HOST") or ""
+    smtp_port: str = os.getenv("SMTP_PORT") or os.getenv("EMAIL_PORT") or ""
+    smtp_username: str = os.getenv("SMTP_USERNAME") or os.getenv("EMAIL_USERNAME") or ""
+    smtp_password: str = os.getenv("SMTP_PASSWORD") or os.getenv("EMAIL_PASSWORD") or ""
+    smtp_from: str = os.getenv("SMTP_FROM") or os.getenv("EMAIL_FROM") or ""
+
+
+# ============================================================
+# SOS RISK SCORING
+# ============================================================
+#
+# These values are authoritative; the design doc should match them.
+# Keyword score: first match adds KEYWORD_FIRST_MATCH_SCORE, each repeat
+# adds up to KEYWORD_REPEAT_SCORE until the keyword window reaches
+# KEYWORD_WINDOW_CAP.
+
+KEYWORD_FIRST_MATCH_SCORE = 40
+KEYWORD_REPEAT_SCORE = 25
+KEYWORD_WINDOW_CAP = 70
+EMOTION_ANGRY_SCORE = 25
+EMOTION_SAD_SCORE = 10
 
 
 # ============================================================

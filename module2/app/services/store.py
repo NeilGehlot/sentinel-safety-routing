@@ -15,7 +15,6 @@ incidents: list = DemoIncidentSource().fetch()
 # SOS prototype state
 sos_journeys: dict = {}
 emergencies: dict = {}
-emergency_events: list = []
 guardian_settings: dict = {
     "guardian_emails": [],
     "location_update_interval_minutes": 5,
@@ -30,9 +29,4 @@ guardian_settings: dict = {
         "allergies": "",
         "medical_conditions": "",
     },
-}
-contacts: dict = {
-    "1": {"id": "1", "name": "Contact 1", "email": ""},
-    "2": {"id": "2", "name": "Contact 2", "email": ""},
-    "3": {"id": "3", "name": "Contact 3", "email": ""},
 }

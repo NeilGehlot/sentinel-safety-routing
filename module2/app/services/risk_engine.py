@@ -1,7 +1,7 @@
 from app.services import store
 
 
-def _level(score):
+def level_for_score(score):
     if score <= 29:
         return "LOW"
     if score <= 59:
@@ -25,7 +25,7 @@ def compute_risk(emergency_or_journey_id):
         return {"risk_score": 0, "risk_level": "LOW", "trigger_reasons": []}
     score = max(0, min(100, int(emergency.get("risk_score", 0))))
     reasons = list(emergency.get("trigger_reasons", []) or [])
-    return {"risk_score": score, "risk_level": _level(score), "trigger_reasons": reasons}
+    return {"risk_score": score, "risk_level": level_for_score(score), "trigger_reasons": reasons}
 
 
 def update_risk(emergency, signal_type, reason=None, delta=0):
@@ -43,5 +43,5 @@ def update_risk(emergency, signal_type, reason=None, delta=0):
         score = max(0, min(100, score + int(delta)))
     emergency["risk_score"] = score
     emergency["trigger_reasons"] = reasons
-    emergency["risk_level"] = _level(score)
+    emergency["risk_level"] = level_for_score(score)
     return compute_risk(emergency)

@@ -174,6 +174,7 @@ export default function Home() {
     return true
   }
 
+  // UI-only: shows a notice but does not call the backend or re-send any location to guardians.
   const shareGuardianLocation = () => {
     if (!sosJourney || validGuardianEmails.length === 0) return
     const recipients = validGuardianEmails.join(', ')
@@ -364,7 +365,7 @@ export default function Home() {
         setSosNotice('Status reset to safe. SOS cleared.')
         return
       }
-      if (payload?.status === 'EMERGENCY_ACTIVE' || payload?.risk_score === 0) {
+      if (payload?.status === 'EMERGENCY_ACTIVE') {
         setSosStatus({ ...payload, status: 'EMERGENCY_ACTIVE', risk_score: 0, risk_level: 'LOW', countdown_required: false, countdown_seconds: 0 })
         setCountdownOpen(false)
         setCountdownSeconds(0)
@@ -388,11 +389,11 @@ export default function Home() {
     }
   }
 
-  const triggerManualSos = async () => {
+  const createEmergency = async (triggerType) => {
     if (!sosJourney || sosStatus?.status === 'EMERGENCY_ACTIVE') return
     stopVoiceMonitoring()
     const recipients = validGuardianEmails.length ? validGuardianEmails.join(', ') : 'guardian contacts'
-    const payload = await run(() => api.createEmergency({ journey_id: sosJourney.journey_id, trigger_type: 'MANUAL', latitude: start.latitude, longitude: start.longitude }))
+    const payload = await run(() => api.createEmergency({ journey_id: sosJourney.journey_id, trigger_type: triggerType, latitude: start.latitude, longitude: start.longitude }))
     if (payload) {
       setSosStatus({ ...payload, status: 'EMERGENCY_ACTIVE', risk_score: 0, risk_level: 'LOW', countdown_required: false, countdown_seconds: 0 })
       setSosNotice(`SOS ACTIVATED — help contacted and is on the way. Alerts sent to ${recipients}.`)
@@ -402,6 +403,10 @@ export default function Home() {
       shareGuardianLocation()
     }
   }
+
+  const triggerManualSos = () => createEmergency('MANUAL')
+
+  const escalateToEmergency = () => createEmergency('AUTO')
 
   const isEmergencyActive = Boolean(sosJourney && sosStatus?.status === 'EMERGENCY_ACTIVE')
   const hideActionButtons = isEmergencyActive
@@ -445,7 +450,7 @@ export default function Home() {
             countdownTriggeredRef.current = true
             ;(async () => {
               await triggerSafetyEvent('COUNTDOWN_EXPIRED')
-              await triggerManualSos()
+              await escalateToEmergency()
             })()
           }
           return 0

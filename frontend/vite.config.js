@@ -10,6 +10,7 @@ export default defineConfig({
       '/signals': 'http://localhost:8000',
       '/emergencies': 'http://localhost:8000',
       '/internal': 'http://localhost:8000',
+      '/settings': 'http://localhost:8000',
     },
   },
 })

@@ -1,7 +1,6 @@
 import base64
 import io
 import logging
-import os
 import smtplib
 import uuid
 from datetime import datetime
@@ -9,9 +8,17 @@ from email.message import EmailMessage
 
 from fastapi import APIRouter, HTTPException
 
-from app.models.schemas import EmergencyCreateRequest, EmergencyResolveRequest, EmailRetryRequest, GuardianSettingsRequest, SignalEventRequest, SosJourneyStartRequest
+from app.config import (
+    EMOTION_ANGRY_SCORE,
+    EMOTION_SAD_SCORE,
+    KEYWORD_FIRST_MATCH_SCORE,
+    KEYWORD_REPEAT_SCORE,
+    KEYWORD_WINDOW_CAP,
+    settings,
+)
+from app.models.schemas import EmergencyCreateRequest, EmergencyResolveRequest, EmergencyResponse, GuardianSettingsRequest, SignalEventRequest, SosJourneyStartRequest
 from app.services import store
-from app.services.risk_engine import compute_risk, update_risk
+from app.services.risk_engine import compute_risk, level_for_score, update_risk
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["sos"])
@@ -114,23 +121,25 @@ def _emergency(eid):
     return store.emergencies[eid]
 
 
-def _level_for(score):
-    if score <= 29:
-        return "LOW"
-    if score <= 59:
-        return "SUSPICIOUS"
-    if score <= 79:
-        return "HIGH"
-    return "CRITICAL"
+def _reset_journey_risk_window(journey):
+    journey["risk_score"] = 0
+    journey["risk_level"] = "LOW"
+    journey["keyword_window_score"] = 0
+    journey["countdown_required"] = False
+    journey["countdown_seconds"] = 0
 
 
-def _send_alert_email(emergency, contact_id="1", recipient_email=None):
-    host = os.getenv("SMTP_HOST") or os.getenv("EMAIL_HOST")
-    port = os.getenv("SMTP_PORT") or os.getenv("EMAIL_PORT")
-    user = os.getenv("SMTP_USERNAME") or os.getenv("EMAIL_USERNAME")
-    password = os.getenv("SMTP_PASSWORD") or os.getenv("EMAIL_PASSWORD")
-    from_addr = os.getenv("SMTP_FROM") or os.getenv("EMAIL_FROM")
-    base_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
+def _guardian_emails():
+    return [email.strip() for email in store.guardian_settings.get("guardian_emails", []) if email and email.strip()]
+
+
+def _send_alert_email(emergency, recipient_email):
+    host = settings.smtp_host
+    port = settings.smtp_port
+    user = settings.smtp_username
+    password = settings.smtp_password
+    from_addr = settings.smtp_from
+    base_url = settings.frontend_base_url
 
     if not all([host, port, user, password, from_addr]):
         return {
@@ -139,7 +148,7 @@ def _send_alert_email(emergency, contact_id="1", recipient_email=None):
             "recipient": recipient_email,
         }
 
-    recipient = recipient_email or store.contacts.get(contact_id, {}).get("email")
+    recipient = recipient_email
     if not recipient:
         return {
             "success": False,
@@ -259,7 +268,6 @@ def start_journey(req: SosJourneyStartRequest):
         "risk_level": "LOW",
         "trigger_reasons": [],
         "keyword_window_score": 0,
-        "keyword_window_count": 0,
         "user_name": req.user_name,
         "latitude": req.latitude,
         "longitude": req.longitude,
@@ -314,25 +322,20 @@ def record_signal(req: SignalEventRequest):
     if req.signal_type == "KEYWORD_DETECTED":
         current = journey.get("keyword_window_score", 0)
         if current == 0:
-            delta = 40
+            delta = KEYWORD_FIRST_MATCH_SCORE
             reason = "Distress keyword detected"
-        elif current < 70:
-            delta = min(25, 70 - current)
-            reason = "Repeated distress keyword"
         else:
-            delta = 15
+            delta = max(0, min(KEYWORD_REPEAT_SCORE, KEYWORD_WINDOW_CAP - current))
             reason = "Repeated distress keyword"
-        journey["keyword_window_score"] = min(90, current + delta)
-        journey["keyword_window_count"] = journey.get("keyword_window_count", 0) + 1
-        signal_reason = reason
-        risk = update_risk(journey, "KEYWORD_DETECTED", reason=signal_reason, delta=delta)
+        journey["keyword_window_score"] = current + delta
+        risk = update_risk(journey, "KEYWORD_DETECTED", reason=reason, delta=delta)
     elif req.signal_type == "EMOTION_DETECTED":
         emotion = (req.emotion or "neutral").lower()
         if emotion == "angry":
-            delta = 25
+            delta = EMOTION_ANGRY_SCORE
             signal_reason = "Angry voice tone"
         elif emotion == "sad":
-            delta = 10
+            delta = EMOTION_SAD_SCORE
             signal_reason = "Sad voice tone"
         else:
             delta = 0
@@ -345,11 +348,8 @@ def record_signal(req: SignalEventRequest):
     elif req.signal_type == "MOVEMENT_RESUMED":
         risk = update_risk(journey, "MOVEMENT_RESUMED", reason="Normal movement resumed", delta=-10)
     elif req.signal_type == "SAFE":
-        journey["keyword_window_score"] = 0
-        journey["keyword_window_count"] = 0
+        _reset_journey_risk_window(journey)
         journey["status"] = "JOURNEY_ACTIVE"
-        journey["countdown_required"] = False
-        journey["countdown_seconds"] = 0
         risk = update_risk(journey, "SAFE")
     else:
         risk = compute_risk(journey)
@@ -366,7 +366,7 @@ def record_signal(req: SignalEventRequest):
         return {"journey_id": req.journey_id, "risk_score": 0, "risk_level": "LOW", "trigger_reasons": ["SOS ACTIVATED"], "countdown_required": False, "countdown_seconds": 0, "status": "EMERGENCY_ACTIVE"}
     if risk["risk_score"] >= 60:
         journey["countdown_required"] = True
-        journey["countdown_seconds"] = 10
+        journey["countdown_seconds"] = settings.safety_countdown_seconds
         if journey["status"] == "JOURNEY_ACTIVE":
             journey["status"] = "SUSPECTED_EMERGENCY"
     else:
@@ -377,9 +377,11 @@ def record_signal(req: SignalEventRequest):
 
 @router.post("/emergencies")
 def create_emergency(req: EmergencyCreateRequest):
+    # TODO: single-user prototype assumption; without journey_id the first stored journey is used.
     journey = _journey(req.journey_id) if req.journey_id else next(iter(store.sos_journeys.values()), None)
     if journey is None:
         raise HTTPException(404, "No active journey")
+    trigger_score = 100 if req.trigger_type == "MANUAL" else int(journey.get("risk_score", 0))
     eid = uuid.uuid4().hex[:8]
     emergency = {
         "id": eid,
@@ -391,23 +393,18 @@ def create_emergency(req: EmergencyCreateRequest):
         "accuracy": req.accuracy,
         "created_at": datetime.utcnow().isoformat() + "Z",
         "status": "ACTIVE",
-        "risk_score": 0,
-        "risk_level": "LOW",
-        "trigger_reasons": ["Manual SOS"] if req.trigger_type == "MANUAL" else ["SOS ACTIVATED"],
+        "risk_score": trigger_score,
+        "risk_level": level_for_score(trigger_score),
+        "trigger_reasons": ["Manual SOS"] if req.trigger_type == "MANUAL" else list(journey.get("trigger_reasons", [])),
+        "events": [],
     }
     store.emergencies[eid] = emergency
     journey["emergency_id"] = eid
     journey["status"] = "EMERGENCY_ACTIVE"
-    journey["risk_score"] = 0
-    journey["risk_level"] = "LOW"
-    journey["countdown_required"] = False
-    journey["countdown_seconds"] = 0
+    _reset_journey_risk_window(journey)
     journey["trigger_reasons"] = ["SOS ACTIVATED"]
-    guardian_emails = [email.strip() for email in store.guardian_settings.get("guardian_emails", []) if email and email.strip()]
-    email_results = []
-    if guardian_emails:
-        for email in guardian_emails:
-            email_results.append(_send_alert_email(emergency, "guardian", recipient_email=email))
+    guardian_emails = _guardian_emails()
+    email_results = [_send_alert_email(emergency, email) for email in guardian_emails]
     return {
         "emergency_id": eid,
         "status": "EMERGENCY_ACTIVE",
@@ -422,10 +419,25 @@ def create_emergency(req: EmergencyCreateRequest):
     }
 
 
-@router.get("/emergencies/{eid}")
+def _emergency_response(emergency):
+    return EmergencyResponse(
+        id=emergency["id"],
+        journey_id=emergency["journey_id"],
+        trigger_type=emergency["trigger_type"],
+        user_name=emergency.get("user_name"),
+        latitude=emergency.get("latitude"),
+        longitude=emergency.get("longitude"),
+        accuracy=emergency.get("accuracy"),
+        created_at=emergency["created_at"],
+        status=emergency["status"],
+        events=list(emergency.get("events", [])),
+        **compute_risk(emergency),
+    )
+
+
+@router.get("/emergencies/{eid}", response_model=EmergencyResponse)
 def read_emergency(eid: str):
-    emergency = _emergency(eid)
-    return {**emergency, **compute_risk(emergency)}
+    return _emergency_response(_emergency(eid))
 
 
 @router.post("/emergencies/{eid}/resolve")
@@ -435,12 +447,8 @@ def resolve_emergency(eid: str, req: EmergencyResolveRequest):
     if req.reason == "SAFE":
         emergency["status"] = "RESOLVED"
         journey["status"] = "JOURNEY_ACTIVE"
-        journey["risk_score"] = 0
-        journey["risk_level"] = "LOW"
+        _reset_journey_risk_window(journey)
         journey["trigger_reasons"] = []
-        journey["keyword_window_score"] = 0
-        journey["countdown_required"] = False
-        journey["countdown_seconds"] = 0
         emergency["risk_score"] = 0
         emergency["risk_level"] = "LOW"
         emergency["trigger_reasons"] = ["User confirmed safe"]
@@ -449,19 +457,14 @@ def resolve_emergency(eid: str, req: EmergencyResolveRequest):
     return {"emergency_id": eid, "status": "RESOLVED"}
 
 
-@router.post("/emergencies/{eid}/acknowledge")
-def acknowledge_emergency(eid: str, contact_id: str = "1"):
-    emergency = _emergency(eid)
-    emergency.setdefault("acknowledged_by", set()).add(contact_id)
-    return {"emergency_id": eid, "acknowledged_by": sorted(emergency["acknowledged_by"]) }
-
-
 @router.post("/emergencies/{eid}/resend-email")
-def resend_email(eid: str, req: EmailRetryRequest):
+def resend_email(eid: str):
     emergency = _emergency(eid)
-    r = _send_alert_email(emergency, req.contact_id or "1")
-    emergency.setdefault("events", []).append({"event_type": "EMAIL_SENT", "metadata": {"success": r.get("success", False), "error": r.get("error", "")}})
-    return {"emergency_id": eid, "success": r.get("success", False), "error": r.get("error")}
+    results = [_send_alert_email(emergency, email) for email in _guardian_emails()]
+    success = bool(results) and all(r.get("success") for r in results)
+    errors = [r["error"] for r in results if r.get("error")]
+    emergency.setdefault("events", []).append({"event_type": "EMAIL_SENT", "metadata": {"success": success, "errors": errors}})
+    return {"emergency_id": eid, "success": success, "email_results": results}
 
 
 @router.post("/internal/emotion-infer")
