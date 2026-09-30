@@ -14,7 +14,7 @@ def search(req: SearchRequest):
     for r in found:
         eff = route_matcher.match(r["geometry"], store.incidents, 0, r["distance_m"]/r["duration_s"])
         sc = route_scorer.score(r["geometry"], eff)
-        r.update(safety=sc["safety"], factors=sc["factors"], incident_count=sc["incident_count"], eta_min=round(r["duration_s"]/60, 1))
+        r.update(safety=min(100, sc["safety"] + r.get("safety_bonus", 0)), factors=sc["factors"], incident_count=sc["incident_count"], eta_min=round(r["duration_s"]/60, 1))
         store.routes[r["id"]] = r
     best = max(found, key=lambda x: x["safety"])
     for r in found:

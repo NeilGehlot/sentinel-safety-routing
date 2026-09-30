@@ -214,14 +214,17 @@ class RoutingService:
         (a_lat, a_lon), (b_lat, b_lon) = start, end
         d_lat, d_lon = b_lat - a_lat, b_lon - a_lon
         routes = []
-        for bend, speed in ((0.0, 9.0), (0.18, 10.0), (-0.3, 11.5)):
+        # Detours get a safety bonus so the faster/safer trade-off is visible offline.
+        for bend, speed, bonus in ((0.0, 9.0, 0), (0.18, 10.0, 6), (-0.3, 11.5, 12)):
             geom = []
             for i in range(41):
                 t = i / 40
                 off = bend * 4 * t * (1 - t)
                 geom.append([a_lat + d_lat * t - d_lon * off, a_lon + d_lon * t + d_lat * off])
             dist = max(path_length(geom), 1.0)
-            routes.append(self._mk(geom=geom, dist=dist, dur=dist / speed * (1 + abs(bend)), src="mock"))
+            route = self._mk(geom=geom, dist=dist, dur=dist / speed * (1 + abs(bend)), src="mock")
+            route["safety_bonus"] = bonus
+            routes.append(route)
         return routes
 
     @staticmethod
