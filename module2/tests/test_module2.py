@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import timedelta
 from fastapi.testclient import TestClient
 from app.main import app
@@ -31,12 +32,12 @@ def test_no_reroute_without_incident():
 def test_reroute_and_eta_limit(monkeypatch):
     r = route(); p = point_at(r["geometry"], 600)
     assert rs.evaluate(RoutingService(), r, 0, S, D, [inc(*p)])["recommended"]
-    monkeypatch.setattr(rs.settings, "max_extra", -100)
+    monkeypatch.setattr(rs, "settings", replace(rs.settings, max_extra=-100))
     assert not rs.evaluate(RoutingService(), r, 0, S, D, [inc(*p)])["recommended"]
 
 def test_small_improvement_no_reroute(monkeypatch):
     r = route(); p = point_at(r["geometry"], 600)
-    monkeypatch.setattr(rs.settings, "min_improve", 999)
+    monkeypatch.setattr(rs, "settings", replace(rs.settings, min_improve=999))
     assert not rs.evaluate(RoutingService(), r, 0, S, D, [inc(*p)])["recommended"]
 
 def test_full_demo_flow():
