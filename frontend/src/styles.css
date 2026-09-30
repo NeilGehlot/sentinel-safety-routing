@@ -42,3 +42,7 @@
 .analysis-section{border:1px solid var(--line);border-radius:var(--s1);background:var(--surface)}
 .analysis-trigger{width:100%;display:flex;justify-content:space-between;padding:var(--s2);height:auto;font-weight:600}
 .analysis-content{padding:0 var(--s2) var(--s2)}
+.independence-list li{grid-template-columns:1fr auto;text-transform:none;font-size:12px}
+.independence-list em{font-size:12px;font-weight:600;white-space:nowrap}
+.sos-top-button{background:#e24a55;color:#fff;border:0;border-radius:8px;padding:8px 16px;font-weight:800;letter-spacing:1px;cursor:pointer;margin-right:8px}
+.sos-top-button:disabled{opacity:.5;cursor:default}

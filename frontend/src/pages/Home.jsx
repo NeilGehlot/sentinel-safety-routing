@@ -562,7 +562,7 @@ export default function Home() {
       <div className="sidebar-foot"><div className="avatar">A</div><div><b>Aarav</b><small>Stay safe.</small></div><span className="more">•••</span></div>
     </aside>
     <main className="workspace">
-      <header className="topbar"><div><span className="eyebrow">Safety-first navigation</span><h1>{jid ? 'Live journey' : 'Safe route planner'}</h1></div><div className="top-actions"><span className="status-chip"><span className="live-dot" />{jid ? 'Journey active' : 'Ready to plan'}</span><button className="icon-button">?</button></div></header>
+      <header className="topbar"><div><span className="eyebrow">Safety-first navigation</span><h1>{jid ? 'Live journey' : 'Safe route planner'}</h1></div><div className="top-actions"><span className="status-chip"><span className="live-dot" />{jid ? 'Journey active' : 'Ready to plan'}</span><button type="button" className="sos-top-button" onClick={sosJourney ? triggerManualSos : startSafetyJourney} disabled={isEmergencyActive} title={sosJourney ? "Send manual SOS" : "Activate safety monitor"}>SOS</button><button className="icon-button">?</button></div></header>
       <section className="panel sos-panel">
         <div className="panel-heading">
           <div><span className="eyebrow">04 · Intelligent SOS</span><h2>Safety monitor</h2></div>
@@ -631,7 +631,7 @@ export default function Home() {
         <div className="map-column"><div className="map-toolbar"><div className="map-tabs">{[['safety', '◉ Safety View'], ['safepoints', '⌖ Safe Points'], ['heatmap', '◌ Risk Heatmap'], ['time', '◷ Time Profile']].map(([k, label]) => <button type="button" key={k} className={mapMode === k ? 'active' : ''} onClick={() => setMapMode(k)}>{label}</button>)}</div><span className="map-expand">⛶</span></div><MapView routes={shown} selectedId={jid ? st?.route_id : sel} alt={st?.reroute?.alternative} incidents={st?.incidents_ahead || []} heatmapIncidents={incidents} position={gps || st?.position} start={start} dest={dest} mode={mapMode} safePoints={safePoints} onMapClick={mapClick} />{mapMode === 'time' && <div className="time-overlay panel"><b>Time profile for this area</b><TimeProfileTable route={activeRoute} preference={preference} minEta={minEta} /></div>}</div>
         <div className="intel-column"><SafetyProfile route={activeRoute} preference={preference} minEta={minEta} /><SafePointPanel route={activeRoute} points={safePoints} /><IndependencePanel routes={routes} incidents={incidents} /><IncidentSummary incidents={incidents} /></div>
       </section>
-      <AnalysisPanel route={scoredRoutes.find((r) => r.id === activeRoute?.id) || activeRoute} incidents={incidents} analysis={st?.reroute_analysis} routes={routes} />
+      <AnalysisPanel route={activeRoute} incidents={incidents} analysis={st?.reroute_analysis} />
     </main>
   </div>)
 }
