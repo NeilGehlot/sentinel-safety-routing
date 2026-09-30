@@ -2,6 +2,7 @@ const j = async (r) => { if (!r.ok) throw new Error((await r.json().catch(() => 
 const post = (u, b) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) }).then(j)
 export const api = {
   search: (start, destination) => post('/api/routes/search', { start, destination }),
+  recent: () => fetch('/api/incidents/recent').then(j),
   start: (route_id) => post('/api/navigation/start', { route_id }),
   status: (id) => fetch(`/api/navigation/${id}/status`).then(j),
   inject: (journey_id) => post('/api/demo/inject-incident', { journey_id }),

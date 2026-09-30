@@ -38,7 +38,7 @@ Copy the example file and edit as needed:
 ```bash
 cp .env.example .env
 ```
-Use the required values for any SMTP or frontend env vars you want to test. The app also supports route/journey demo config values such as polling and timing intervals.
+Use the required values for any SMTP or frontend env vars you want to test. The app also supports route/journey demo config values such as polling and timing intervals. For real route search, set `ORS_API_KEY` in the environment.
 
 ### 3) Start the backend
 ```bash
@@ -74,6 +74,9 @@ Then open the frontend in the browser, usually at:
 3. Observe the risk score and countdown behavior
 4. Confirm "I'm safe" before timeout or trigger a manual SOS
 5. Review the created emergency state and related alert flow
+
+### Browser microphone note
+The browser voice flow uses the Web Speech API and can fail with a `network` error in restricted environments. If the browser does not grant microphone access or speech recognition is unavailable, use the manual transcript box and the demo buttons to simulate a distress phrase and continue testing the SOS workflow.
 
 ## Tests
 

@@ -36,11 +36,20 @@ def status(jid):
     idx = int(len(r["geometry"])*j["progress"]/max(r["distance_m"], 1))
     nxt = r["geometry"][min(idx+5, len(r["geometry"])-1)]
     alt = ev["alternative"]
+    analysis = {"recommended": rec, "why_not": ev["why_not"]}
+    if alt:
+        analysis.update({
+            "improvement": ev["improvement"],
+            "extra_minutes": ev["extra_minutes"],
+            "alternative": {k: alt[k] for k in ("id", "geometry", "safety", "eta_min", "distance_m")},
+        })
     return {"journey_id": jid, "route_id": r["id"], "position": {"latitude": pos[0], "longitude": pos[1]},
-            "progress_m": round(j["progress"]), "eta_min": round(ev["remaining_min"], 1),
+            "distance_m": round(r["distance_m"]), "progress_m": round(j["progress"]),
+            "eta_min": round(ev["remaining_min"], 1),
             "safety": ev["current_safety"], "factors": ev["factors"], "geometry": r["geometry"],
             "status": "completed" if done else ("reroute_recommended" if rec else ("incident_ahead" if ahead else "on_track")),
             "incidents_ahead": ahead, "next_checkpoint": {"latitude": nxt[0], "longitude": nxt[1]},
+            "reroute_analysis": analysis,
             "reroute": ({"alternative": {k: alt[k] for k in ("id", "geometry", "safety", "eta_min", "distance_m")},
                          "reasons": ev["reasons"], "improvement": ev["improvement"], "extra_minutes": ev["extra_minutes"],
                          "current_safety": ev["current_safety"], "current_eta_min": round(ev["remaining_min"], 1)} if rec else None),
