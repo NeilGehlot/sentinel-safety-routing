@@ -16,8 +16,23 @@ incidents: list = DemoIncidentSource().fetch()
 sos_journeys: dict = {}
 emergencies: dict = {}
 emergency_events: list = []
+guardian_settings: dict = {
+    "guardian_emails": [],
+    "location_update_interval_minutes": 5,
+    "emergency_contacts": [
+        {"label": "Police", "number": "112"},
+        {"label": "Emergency", "number": "108"},
+    ],
+    "emergency_profile": {
+        "name": "",
+        "address": "",
+        "blood_type": "",
+        "allergies": "",
+        "medical_conditions": "",
+    },
+}
 contacts: dict = {
-    "1": {"id": "1", "name": "Contact 1", "email": "contact1@example.com"},
-    "2": {"id": "2", "name": "Contact 2", "email": "contact2@example.com"},
-    "3": {"id": "3", "name": "Contact 3", "email": "contact3@example.com"},
+    "1": {"id": "1", "name": "Contact 1", "email": ""},
+    "2": {"id": "2", "name": "Contact 2", "email": ""},
+    "3": {"id": "3", "name": "Contact 3", "email": ""},
 }

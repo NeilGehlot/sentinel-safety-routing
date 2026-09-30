@@ -79,6 +79,26 @@ class EmergencyResolveRequest(BaseModel):
 class EmailRetryRequest(BaseModel):
     contact_id: Optional[str] = "1"
 
+class EmergencyContactEntry(BaseModel):
+    label: str = "Emergency"
+    number: str = ""
+
+class EmergencyProfile(BaseModel):
+    name: str = ""
+    address: str = ""
+    blood_type: str = ""
+    allergies: str = ""
+    medical_conditions: str = ""
+
+class GuardianSettingsRequest(BaseModel):
+    guardian_emails: list[str] = Field(default_factory=lambda: ["", ""])
+    location_update_interval_minutes: int = Field(default=5, ge=1, le=60)
+    emergency_contacts: list[EmergencyContactEntry] = Field(default_factory=lambda: [
+        EmergencyContactEntry(label="Police", number="112"),
+        EmergencyContactEntry(label="Emergency", number="108"),
+    ])
+    emergency_profile: EmergencyProfile = Field(default_factory=EmergencyProfile)
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)

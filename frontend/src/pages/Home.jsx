@@ -53,13 +53,101 @@ export default function Home() {
   const [gps, setGps] = useState(), watch = useRef()
   const [sosJourney, setSosJourney] = useState(null), [sosStatus, setSosStatus] = useState(null), [sosNotice, setSosNotice] = useState('')
   const [isListening, setIsListening] = useState(false), [manualTranscript, setManualTranscript] = useState('help me')
+  const [liveTranscript, setLiveTranscript] = useState('')
+  const [activeNav, setActiveNav] = useState('Route Planner')
+  const [currentPage, setCurrentPage] = useState('home')
+  const [guardianEmails, setGuardianEmails] = useState([])
+  const [emergencyContacts, setEmergencyContacts] = useState([
+    { label: 'Police', number: '112' },
+    { label: 'Ambulance', number: '108' }
+  ])
+  const [emergencyProfile, setEmergencyProfile] = useState({
+    name: '',
+    address: '',
+    blood_type: '',
+    allergies: '',
+    medical_conditions: '',
+  })
+  const [locationUpdateMinutes, setLocationUpdateMinutes] = useState(5)
+  const [settingsSavedMessage, setSettingsSavedMessage] = useState('')
+  const [countdownOpen, setCountdownOpen] = useState(false)
+  const [countdownSeconds, setCountdownSeconds] = useState(10)
   const recognitionRef = useRef(null)
   const audioStreamRef = useRef(null)
   const mediaRecorderRef = useRef(null)
   const lastVoiceEventRef = useRef(0)
+  const countdownTriggeredRef = useRef(false)
   const run = async (fn) => { setErr(); try { return await fn() } catch (e) { setErr(e.message) } }
 
   useEffect(() => { api.recent().then(setIncidents).catch(() => {}) }, [])
+  useEffect(() => {
+    const loadSettings = async () => {
+      const settings = await run(() => api.getGuardianSettings())
+      if (!settings) return
+      const emails = Array.isArray(settings.guardian_emails) ? settings.guardian_emails : []
+      const contacts = Array.isArray(settings.emergency_contacts) && settings.emergency_contacts.length
+        ? settings.emergency_contacts
+        : [{ label: 'Police', number: '112' }, { label: 'Ambulance', number: '108' }]
+      setGuardianEmails(emails.slice(0, 2))
+      setEmergencyContacts(contacts.slice(0, 2).map((item) => ({ label: item.label || 'Emergency', number: item.number || '' })))
+      setEmergencyProfile({
+        name: settings.emergency_profile?.name || '',
+        address: settings.emergency_profile?.address || '',
+        blood_type: settings.emergency_profile?.blood_type || '',
+        allergies: settings.emergency_profile?.allergies || '',
+        medical_conditions: settings.emergency_profile?.medical_conditions || '',
+      })
+      setLocationUpdateMinutes(Number(settings.location_update_interval_minutes) || 5)
+    }
+    loadSettings()
+  }, [])
+
+  const validGuardianEmails = guardianEmails.map((email) => (email || '').trim()).filter(Boolean)
+  const validEmergencyContacts = emergencyContacts.filter((c) => (c.number || '').trim())
+
+  const saveSettings = async () => {
+    const cleanEmails = guardianEmails.map((email) => (email || '').trim()).filter(Boolean)
+    if (cleanEmails.length < 2) {
+      setSosNotice('Add guardian emails in Settings before enabling the safety monitor.')
+      setSettingsSavedMessage('Need two guardian emails.')
+      setCurrentPage('settings')
+      setActiveNav('Settings')
+      return
+    }
+
+    const payload = {
+      guardian_emails: cleanEmails.slice(0, 2),
+      location_update_interval_minutes: Number(locationUpdateMinutes) || 5,
+      emergency_contacts: emergencyContacts
+        .map((item) => ({ label: item.label || 'Emergency', number: String(item.number || '').trim() }))
+        .filter((item) => item.number),
+      emergency_profile: {
+        ...emergencyProfile,
+        name: (emergencyProfile.name || '').trim(),
+        address: (emergencyProfile.address || '').trim(),
+        blood_type: (emergencyProfile.blood_type || '').trim(),
+        allergies: (emergencyProfile.allergies || '').trim(),
+        medical_conditions: (emergencyProfile.medical_conditions || '').trim(),
+      }
+    }
+
+    const saved = await run(() => api.saveGuardianSettings(payload))
+    if (!saved) return
+    setGuardianEmails(saved.guardian_emails || cleanEmails.slice(0, 2))
+    setEmergencyContacts((saved.emergency_contacts || []).map((item) => ({ label: item.label || 'Emergency', number: item.number || '' })))
+    setEmergencyProfile({
+      name: saved.emergency_profile?.name || '',
+      address: saved.emergency_profile?.address || '',
+      blood_type: saved.emergency_profile?.blood_type || '',
+      allergies: saved.emergency_profile?.allergies || '',
+      medical_conditions: saved.emergency_profile?.medical_conditions || '',
+    })
+    setLocationUpdateMinutes(Number(saved.location_update_interval_minutes) || 5)
+    setSettingsSavedMessage('Settings saved.')
+    setSosNotice(`Guardian alerts configured for ${cleanEmails.join(', ')}.`)
+    setCurrentPage('home')
+    setActiveNav('Route Planner')
+  }
 
   const stopVoiceMonitoring = () => {
     if (recognitionRef.current) {
@@ -74,6 +162,22 @@ export default function Home() {
       audioStreamRef.current = null
     }
     setIsListening(false)
+  }
+
+  const ensureGuardiansConfigured = () => {
+    if (validGuardianEmails.length < 2) {
+      setCurrentPage('settings')
+      setActiveNav('Settings')
+      setSosNotice('Add guardian emails in Settings before enabling the safety monitor.')
+      return false
+    }
+    return true
+  }
+
+  const shareGuardianLocation = () => {
+    if (!sosJourney || validGuardianEmails.length === 0) return
+    const recipients = validGuardianEmails.join(', ')
+    setSosNotice(`SOS location shared to ${recipients}. Help contacted and is on the way.`)
   }
 
   const processTranscript = async (transcript) => {
@@ -112,6 +216,7 @@ export default function Home() {
 
       const stream = audioStreamRef.current
       const recorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = recorder
       const audioChunks = []
       recorder.ondataavailable = (event) => event.data && audioChunks.push(event.data)
 
@@ -145,43 +250,56 @@ export default function Home() {
   }
 
   const startVoiceMonitoring = async () => {
+    setLiveTranscript('')
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setSosNotice('Microphone access is unavailable in this browser. Use the manual transcript box or demo buttons instead.')
+      setIsListening(false)
+      return
+    }
+
     try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error('This browser does not support microphone access.')
-      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       audioStreamRef.current = stream
     } catch (error) {
-      setErr(`Microphone permission failed: ${error.message || 'Please allow mic access.'}`)
+      setSosNotice(`Microphone permission is blocked: ${error.message || 'allow mic access to enable live voice detection.'}`)
       setIsListening(false)
       return
     }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) {
-      setErr('This browser does not support the Web Speech API for microphone listening.')
+      setSosNotice('Browser speech recognition is unavailable here. The app is in transcript fallback mode, so you can still trigger SOS manually.')
       setIsListening(false)
       return
     }
 
     const recognition = new SpeechRecognition()
     recognition.lang = 'en-IN'
-    recognition.interimResults = false
+    recognition.interimResults = true
     recognition.continuous = true
 
     recognition.onresult = async (event) => {
-      const transcript = Array.from(event.results).map((result) => result[0]?.transcript || '').join(' ').trim()
-      if (!transcript) return
-      await processTranscript(transcript)
+      const results = Array.from(event.results)
+      const interim = results.map((result) => result[0]?.transcript || '').join(' ').trim()
+      const finalText = results.filter((result) => result.isFinal).map((result) => result[0]?.transcript || '').join(' ').trim()
+
+      setLiveTranscript(interim || finalText)
+
+      if (finalText) {
+        await processTranscript(finalText)
+      }
     }
 
     recognition.onerror = (event) => {
-      const msg = event.error === 'network' || event.error === 'service-not-allowed'
-        ? 'Browser speech recognition is unavailable here. Use the manual transcript box or demo buttons.'
+      const fallbackMessages = ['network', 'service-not-allowed', 'not-allowed', 'audio-capture', 'no-speech']
+      const msg = fallbackMessages.includes(event.error)
+        ? 'Browser speech recognition is unavailable here. The manual transcript box and demo buttons are still active.'
         : `Microphone listening failed: ${event.error}`
 
       setSosNotice(msg)
       setIsListening(false)
+      setLiveTranscript('')
     }
 
     recognition.onend = () => {
@@ -215,12 +333,15 @@ export default function Home() {
   const keep = async () => { await run(() => api.dismiss(jid)); setNote('Keeping current route.'); refresh() }
 
   const startSafetyJourney = async () => {
+    if (!ensureGuardiansConfigured()) return
+
     const payload = await run(() => api.startSafetyMonitor({ user_name: 'Demo User', latitude: start.latitude, longitude: start.longitude }))
     if (!payload) return
 
     setSosJourney(payload)
     setSosNotice('Safety monitor active. Please allow microphone access.')
     setSosStatus({ risk_level: 'LOW', risk_score: 0, status: 'JOURNEY_ACTIVE', countdown_required: false, countdown_seconds: 0 })
+    countdownTriggeredRef.current = false
     await startVoiceMonitoring()
   }
 
@@ -232,15 +353,66 @@ export default function Home() {
 
   const triggerSafetyEvent = async (signal_type, emotion) => {
     if (!sosJourney) return
+    if (sosStatus?.status === 'EMERGENCY_ACTIVE' && signal_type !== 'SAFE') return
     const payload = await run(() => api.signal({ journey_id: sosJourney.journey_id, signal_type, latitude: start.latitude, longitude: start.longitude, emotion }))
-    if (payload) { setSosStatus(payload); setSosNotice(`${signal_type} recorded.`) }
+    if (payload) {
+      if (signal_type === 'SAFE') {
+        setSosStatus({ ...payload, status: 'JOURNEY_ACTIVE', risk_score: 0, risk_level: 'LOW', countdown_required: false, countdown_seconds: 0 })
+        setCountdownOpen(false)
+        setCountdownSeconds(0)
+        countdownTriggeredRef.current = true
+        setSosNotice('Status reset to safe. SOS cleared.')
+        return
+      }
+      if (payload?.status === 'EMERGENCY_ACTIVE' || payload?.risk_score === 0) {
+        setSosStatus({ ...payload, status: 'EMERGENCY_ACTIVE', risk_score: 0, risk_level: 'LOW', countdown_required: false, countdown_seconds: 0 })
+        setCountdownOpen(false)
+        setCountdownSeconds(0)
+        countdownTriggeredRef.current = true
+        setSosNotice('SOS ACTIVATED — Help contacted and is on the way.')
+        return
+      }
+      setSosStatus(payload)
+      setSosNotice(`${signal_type} recorded.`)
+      if (payload?.risk_score >= 60 && !countdownOpen) {
+        setCountdownOpen(true)
+        setCountdownSeconds(Number(payload?.countdown_seconds) || 10)
+      }
+      if (payload?.risk_score >= 60 && !countdownTriggeredRef.current && payload?.countdown_required) {
+        countdownTriggeredRef.current = false
+      }
+      if (payload?.risk_score >= 60 && payload?.countdown_required === false) {
+        setCountdownOpen(false)
+        setCountdownSeconds(0)
+      }
+    }
   }
 
   const triggerManualSos = async () => {
-    if (!sosJourney) return
+    if (!sosJourney || sosStatus?.status === 'EMERGENCY_ACTIVE') return
     stopVoiceMonitoring()
+    const recipients = validGuardianEmails.length ? validGuardianEmails.join(', ') : 'guardian contacts'
     const payload = await run(() => api.createEmergency({ journey_id: sosJourney.journey_id, trigger_type: 'MANUAL', latitude: start.latitude, longitude: start.longitude }))
-    if (payload) { setSosStatus({ ...payload, status: 'EMERGENCY_ACTIVE' }); setSosNotice('Manual SOS created.') }
+    if (payload) {
+      setSosStatus({ ...payload, status: 'EMERGENCY_ACTIVE', risk_score: 0, risk_level: 'LOW', countdown_required: false, countdown_seconds: 0 })
+      setSosNotice(`SOS ACTIVATED — help contacted and is on the way. Alerts sent to ${recipients}.`)
+      setCountdownOpen(false)
+      setCountdownSeconds(0)
+      countdownTriggeredRef.current = true
+      shareGuardianLocation()
+    }
+  }
+
+  const isEmergencyActive = Boolean(sosJourney && sosStatus?.status === 'EMERGENCY_ACTIVE')
+  const hideActionButtons = isEmergencyActive
+  const riskDisplayValue = Number(sosStatus?.risk_score ?? 0)
+
+  const handleSafeResponse = async () => {
+    if (sosStatus?.status === 'EMERGENCY_ACTIVE') return
+    setCountdownOpen(false)
+    setCountdownSeconds(0)
+    countdownTriggeredRef.current = true
+    await triggerSafetyEvent('SAFE')
   }
 
   useEffect(() => {
@@ -249,36 +421,180 @@ export default function Home() {
     return () => clearInterval(id)
   }, [sosJourney])
 
+  useEffect(() => {
+    if (!sosJourney) {
+      setCountdownOpen(false)
+      setCountdownSeconds(10)
+      return
+    }
+    const required = Boolean(sosStatus?.countdown_required)
+    setCountdownOpen(required)
+    if (required) {
+      setCountdownSeconds(Number(sosStatus?.countdown_seconds) || 10)
+      countdownTriggeredRef.current = false
+    }
+  }, [sosJourney, sosStatus?.countdown_required, sosStatus?.countdown_seconds])
+
+  useEffect(() => {
+    if (!countdownOpen || !sosJourney) return
+    const id = setInterval(() => {
+      setCountdownSeconds((current) => {
+        if (current <= 1) {
+          clearInterval(id)
+          if (!countdownTriggeredRef.current) {
+            countdownTriggeredRef.current = true
+            ;(async () => {
+              await triggerSafetyEvent('COUNTDOWN_EXPIRED')
+              await triggerManualSos()
+            })()
+          }
+          return 0
+        }
+        return current - 1
+      })
+    }, 1000)
+    return () => clearInterval(id)
+  }, [countdownOpen, sosJourney])
+
+  useEffect(() => {
+    if (!sosJourney || validGuardianEmails.length === 0) return
+    const intervalMs = Math.max(300000, Number(locationUpdateMinutes || 5) * 60 * 1000)
+    const id = setInterval(() => shareGuardianLocation(), intervalMs)
+    return () => clearInterval(id)
+  }, [sosJourney, validGuardianEmails.length, locationUpdateMinutes])
+
   useEffect(() => () => stopVoiceMonitoring(), [])
 
   const selectedRoute = routes.find((r) => r.id === sel)
   const activeRoute = st ? { id: st.route_id, geometry: st.geometry, safety: st.safety, factors: st.factors, distance_m: st.distance_m, progress_m: st.progress_m, eta_min: st.eta_min, incident_count: st.incidents_ahead.length } : selectedRoute
-  const navItems = [['⌂', 'Home'], ['⌖', 'Route Planner'], ['◉', 'Live Journey'], ['◈', 'Safety Reports'], ['☆', 'Saved Places'], ['⚙', 'Settings']]
+  const navItems = [{ icon: '⌂', label: 'Home' }, { icon: '⌖', label: 'Route Planner' }, { icon: '◉', label: 'Live Journey' }, { icon: '◈', label: 'Safety Reports' }, { icon: '☆', label: 'Saved Places' }, { icon: '⚙', label: 'Settings' }]
   const shown = st ? [{ id: st.route_id, geometry: st.geometry }] : routes
+
+  if (currentPage === 'settings') {
+    return (<div className="dashboard settings-page-shell">
+      <aside className="sidebar">
+        <div className="brand"><span className="brand-mark">✦</span><div><strong>SENTINEL</strong><small>Safe navigation</small></div></div>
+        <nav className="sidebar-nav">{navItems.map(({ icon, label }) => (
+          <button
+            key={label}
+            type="button"
+            className={'nav-item' + (label === activeNav ? ' active' : '')}
+            onClick={() => {
+              setActiveNav(label)
+              setCurrentPage(label === 'Settings' ? 'settings' : 'home')
+            }}
+          >
+            <span>{icon}</span>{label}
+          </button>
+        ))}</nav>
+        <div className="sidebar-foot"><div className="avatar">A</div><div><b>Aarav</b><small>Stay safe.</small></div><span className="more">•••</span></div>
+      </aside>
+      <main className="workspace settings-page">
+        <header className="topbar settings-topbar"><div><span className="eyebrow">Safety preferences</span><h1>Guardian settings</h1></div><button className="sos-button sos-button-muted" onClick={() => { setCurrentPage('home'); setActiveNav('Route Planner') }}>← Back to home</button></header>
+        <section className="panel settings-panel">
+          <div className="settings-page-form">
+            <label>Guardian email 1<input value={guardianEmails[0] || ''} onChange={(e) => setGuardianEmails((current) => [e.target.value, current[1] || ''])} placeholder="guardian1@example.com" /></label>
+            <label>Guardian email 2<input value={guardianEmails[1] || ''} onChange={(e) => setGuardianEmails((current) => [current[0] || '', e.target.value])} placeholder="guardian2@example.com" /></label>
+            <label>Emergency contact 1<input value={emergencyContacts[0]?.number || ''} onChange={(e) => setEmergencyContacts((current) => [{ ...current[0], number: e.target.value }, current[1] || { label: 'Ambulance', number: '108' }])} placeholder="112" /></label>
+            <label>Emergency contact 2<input value={emergencyContacts[1]?.number || ''} onChange={(e) => setEmergencyContacts((current) => [current[0] || { label: 'Police', number: '112' }, { ...current[1], number: e.target.value }])} placeholder="108" /></label>
+            <label>User name<input value={emergencyProfile.name} onChange={(e) => setEmergencyProfile((current) => ({ ...current, name: e.target.value }))} placeholder="Name" /></label>
+            <label>Address<textarea value={emergencyProfile.address} onChange={(e) => setEmergencyProfile((current) => ({ ...current, address: e.target.value }))} placeholder="Address" rows={3} /></label>
+            <label>Blood type<input value={emergencyProfile.blood_type} onChange={(e) => setEmergencyProfile((current) => ({ ...current, blood_type: e.target.value }))} placeholder="A+" /></label>
+            <label>Allergies<input value={emergencyProfile.allergies} onChange={(e) => setEmergencyProfile((current) => ({ ...current, allergies: e.target.value }))} placeholder="Penicillin, peanuts" /></label>
+            <label>Medical conditions<input value={emergencyProfile.medical_conditions} onChange={(e) => setEmergencyProfile((current) => ({ ...current, medical_conditions: e.target.value }))} placeholder="Asthma, epilepsy" /></label>
+            <label>Location update interval
+              <select value={locationUpdateMinutes} onChange={(e) => setLocationUpdateMinutes(Number(e.target.value))}>
+                <option value={5}>5 minutes</option>
+                <option value={10}>10 minutes</option>
+                <option value={15}>15 minutes</option>
+                <option value={30}>30 minutes</option>
+              </select>
+            </label>
+            {settingsSavedMessage && <div className="sos-notice">{settingsSavedMessage}</div>}
+            <button className="sos-button sos-button-primary" onClick={saveSettings}>Save settings</button>
+          </div>
+        </section>
+      </main>
+    </div>)
+  }
 
   return (<div className="dashboard">
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">✦</span><div><strong>SENTINEL</strong><small>Safe navigation</small></div></div>
-      <nav className="sidebar-nav">{navItems.map(([icon, label]) => <div key={label} className={'nav-item' + (label === 'Route Planner' ? ' active' : '')}><span>{icon}</span>{label}</div>)}</nav>
+      <nav className="sidebar-nav">{navItems.map(({ icon, label }) => (
+        <button
+          key={label}
+          type="button"
+          className={'nav-item' + (label === activeNav ? ' active' : '')}
+          onClick={() => {
+            setActiveNav(label)
+            setCurrentPage(label === 'Settings' ? 'settings' : 'home')
+          }}
+        >
+          <span>{icon}</span>{label}
+        </button>
+      ))}</nav>
       <div className="sidebar-foot"><div className="avatar">A</div><div><b>Aarav</b><small>Stay safe.</small></div><span className="more">•••</span></div>
     </aside>
     <main className="workspace">
       <header className="topbar"><div><span className="eyebrow">Safety-first navigation</span><h1>{jid ? 'Live journey' : 'Safe route planner'}</h1></div><div className="top-actions"><span className="status-chip"><span className="live-dot" />{jid ? 'Journey active' : 'Ready to plan'}</span><button className="icon-button">?</button></div></header>
       <section className="panel sos-panel">
-        <div className="panel-heading"><div><span className="eyebrow">04 · Intelligent SOS</span><h2>Safety monitor</h2></div></div>
-        {!sosJourney && <button className="primary" onClick={startSafetyJourney}>Activate safety monitor</button>}
-        {sosJourney && <div>
-          <p className="muted">Journey: {sosJourney.journey_id} · {sosStatus?.status || 'JOURNEY_ACTIVE'}</p>
-          <div className="row"><span className="tag">Risk: {sosStatus?.risk_level || 'LOW'}</span><span className="tag">{sosStatus?.risk_score || 0}</span></div>
+        <div className="panel-heading">
+          <div><span className="eyebrow">04 · Intelligent SOS</span><h2>Safety monitor</h2></div>
+        </div>
+        {!sosJourney && <button className="sos-button sos-button-primary" onClick={startSafetyJourney}>Activate safety monitor</button>}
+        {sosJourney && <div className="sos-panel-body">
+          <div className="sos-header">
+            <p className="muted">Journey: {sosJourney.journey_id} · {sosStatus?.status || 'JOURNEY_ACTIVE'}</p>
+            <div className="sos-tag-row">
+              <span className="tag">Risk: {sosStatus?.risk_level || 'LOW'}</span>
+              <span className="tag">{sosStatus?.risk_score || 0}</span>
+            </div>
+          </div>
+
           {sosStatus?.countdown_required && <div className="alert"><strong>POSSIBLE EMERGENCY DETECTED</strong><p className="muted">Are you safe? Automatic SOS in {sosStatus.countdown_seconds}s</p></div>}
-          <div className="row"><button onClick={() => triggerSafetyEvent('KEYWORD_DETECTED')}>Keyword</button><button onClick={() => triggerSafetyEvent('FALL_DETECTED')}>Fall</button></div>
-          <div className="row"><button onClick={() => triggerSafetyEvent('EMOTION_DETECTED', 'angry')}>Angry voice</button><button onClick={() => triggerSafetyEvent('SAFE')}>I\'m safe</button></div>
-          <button className="primary" onClick={triggerManualSos}>Manual SOS</button>
-          <button onClick={isListening ? stopVoiceMonitoring : startVoiceMonitoring}>{isListening ? 'Stop mic' : 'Start mic'}</button>
-          <div className="row"><input value={manualTranscript} onChange={(e) => setManualTranscript(e.target.value)} placeholder="Type a phrase like 'help me'" /><button onClick={() => processTranscript(manualTranscript)}>Use transcript</button></div>
+          {isEmergencyActive && <div className="alert emergency-alert"><strong>SOS ACTIVATED</strong><p className="muted">Emergency state active. Guardians have been notified and help is on the way.</p></div>}
+
+          <div className="risk-display-wrap">
+            <div className="risk-label">Risk score</div>
+            <div className={`risk-score risk-score-${riskDisplayValue >= 60 ? 'high' : riskDisplayValue >= 30 ? 'mid' : 'low'}`}>{riskDisplayValue}</div>
+          </div>
+
+          <div className="sos-button-grid">
+            {!hideActionButtons && <button className="sos-button sos-button-secondary" onClick={() => triggerSafetyEvent('KEYWORD_DETECTED')}>Keyword</button>}
+            {!hideActionButtons && <button className="sos-button sos-button-secondary" onClick={() => triggerSafetyEvent('FALL_DETECTED')}>Fall</button>}
+            {!hideActionButtons && <button className="sos-button sos-button-secondary" onClick={() => triggerSafetyEvent('EMOTION_DETECTED', 'angry')}>Angry voice</button>}
+            <button className="sos-button sos-button-secondary" onClick={handleSafeResponse}>I am safe</button>
+          </div>
+
+          {!hideActionButtons && <button className="sos-button sos-button-danger" onClick={triggerManualSos}>Manual SOS</button>}
+          {!hideActionButtons && <button className="sos-button sos-button-muted" onClick={isListening ? stopVoiceMonitoring : startVoiceMonitoring}>{isListening ? 'Stop mic' : 'Start mic'}</button>}
+
+          <div className="transcript-box">
+            <label>Current detected words</label>
+            <div className="transcript-buffer">{liveTranscript || 'Listening for speech…'}</div>
+          </div>
+
+          <div className="manual-transcript-row">
+            <input value={manualTranscript} onChange={(e) => setManualTranscript(e.target.value)} placeholder="Type a phrase like 'help me'" />
+            <button className="sos-button sos-button-primary" onClick={() => processTranscript(manualTranscript)}>Use transcript</button>
+          </div>
         </div>}
-        {sosNotice && <p className="muted">{sosNotice}</p>}
+        {sosNotice && <p className="sos-notice">{sosNotice}</p>}
       </section>
+
+      {countdownOpen && <div className="countdown-backdrop">
+        <div className="countdown-modal">
+          <p className="eyebrow">Safety check</p>
+          <h3>Are you safe?</h3>
+          <div className="countdown-total">{countdownSeconds}s</div>
+          <p className="muted">If you do not respond, the app will trigger SOS automatically and notify your guardians.</p>
+          <div className="countdown-actions">
+            <button className="sos-button sos-button-primary" onClick={handleSafeResponse}>I am safe</button>
+            <button className="sos-button sos-button-danger" onClick={triggerManualSos}>Trigger SOS now</button>
+          </div>
+        </div>
+      </div>}
 
       <section className="search-panel">
         <div className="search-fields"><label><span>From</span><div className="field"><span className="field-icon blue">⌖</span><input readOnly value={`${start.latitude.toFixed(4)}, ${start.longitude.toFixed(4)}`} /><button className="locate-button" onClick={locate} title="Use my location">◎</button></div></label><button className="swap-button" onClick={swapLocations} title="Swap locations">⇄</button><label><span>To</span>{destinationMode ? <div className="field destination-search"><span className="field-icon red">●</span><input autoFocus value={destinationQuery} onChange={(e) => typeDestination(e.target.value)} placeholder="Search destination..." /></div> : <div className="field"><span className="field-icon red">●</span><select value={dest.name} onChange={(e) => chooseDestination(e.target.value)}><option value="__search__">Search destination...</option>{PLACES.map((p) => <option key={p.name}>{p.name}</option>)}</select></div>}{destinationMode && <small className="muted destination-note">Only configured destinations can be routed right now.</small>}</label><label className="departure"><span>Depart at</span><div className="field"><span className="field-icon">◷</span><select defaultValue="Now"><option>Now</option><option>Today, later</option></select></div></label><button className="find-button" onClick={search} disabled={busy || Boolean(jid) || destinationMode}>{busy ? 'Finding…' : jid ? 'Route active' : 'Find Safe Routes'} <span>→</span></button></div>

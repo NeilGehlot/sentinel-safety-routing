@@ -9,7 +9,7 @@ from email.message import EmailMessage
 
 from fastapi import APIRouter, HTTPException
 
-from app.models.schemas import EmergencyCreateRequest, EmergencyResolveRequest, EmailRetryRequest, SignalEventRequest, SosJourneyStartRequest
+from app.models.schemas import EmergencyCreateRequest, EmergencyResolveRequest, EmailRetryRequest, GuardianSettingsRequest, SignalEventRequest, SosJourneyStartRequest
 from app.services import store
 from app.services.risk_engine import compute_risk, update_risk
 
@@ -124,48 +124,129 @@ def _level_for(score):
     return "CRITICAL"
 
 
-def _send_alert_email(emergency, contact_id="1"):
-    host = os.getenv("SMTP_HOST")
-    port = os.getenv("SMTP_PORT")
-    user = os.getenv("SMTP_USERNAME")
-    password = os.getenv("SMTP_PASSWORD")
-    from_addr = os.getenv("SMTP_FROM")
+def _send_alert_email(emergency, contact_id="1", recipient_email=None):
+    host = os.getenv("SMTP_HOST") or os.getenv("EMAIL_HOST")
+    port = os.getenv("SMTP_PORT") or os.getenv("EMAIL_PORT")
+    user = os.getenv("SMTP_USERNAME") or os.getenv("EMAIL_USERNAME")
+    password = os.getenv("SMTP_PASSWORD") or os.getenv("EMAIL_PASSWORD")
+    from_addr = os.getenv("SMTP_FROM") or os.getenv("EMAIL_FROM")
     base_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
 
     if not all([host, port, user, password, from_addr]):
-        return {"success": False, "error": "SMTP not configured"}
+        return {
+            "success": False,
+            "error": "SMTP not configured. Add SMTP_HOST/PORT/USERNAME/PASSWORD and SMTP_FROM (or EMAIL_* equivalents) in the backend environment before sending guardian emails.",
+            "recipient": recipient_email,
+        }
+
+    recipient = recipient_email or store.contacts.get(contact_id, {}).get("email")
+    if not recipient:
+        return {
+            "success": False,
+            "error": "No valid guardian email configured for SOS alerts.",
+            "recipient": recipient_email,
+        }
+    port_int = int(port)
 
     try:
         msg = EmailMessage()
-        msg["Subject"] = "EMERGENCY ALERT"
+        msg["Subject"] = "URGENT: SOS ALERT - Immediate Assistance Needed"
         msg["From"] = from_addr
-        msg["To"] = store.contacts.get(contact_id, {}).get("email", "contact@example.com")
+        msg["To"] = recipient
+        msg["Reply-To"] = from_addr
+
         lat = emergency.get("latitude")
         lon = emergency.get("longitude")
-        loc = "unavailable" if lat is None or lon is None else f"{lat}, {lon}"
+        profile = store.guardian_settings.get("emergency_profile", {})
+        address = (profile.get("address") or "Address not provided").strip() or "Address not provided"
+        blood_type = (profile.get("blood_type") or "Not provided").strip() or "Not provided"
+        emergency_contacts = store.guardian_settings.get("emergency_contacts") or []
+        contacts_text = "\n".join(
+            f"- {item.get('label', 'Contact')}: {item.get('number', 'N/A')}"
+            for item in emergency_contacts if item.get("number")
+        ) or "- No emergency contacts configured"
         map_url = "unavailable" if lat is None or lon is None else f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=17/{lat}/{lon}"
+        location_link = f"{base_url}/?lat={lat}&lng={lon}" if lat is not None and lon is not None else "Location unavailable"
         body = (
-            "EMERGENCY ALERT\n\n"
+            "URGENT SOS ALERT\n\n"
+            "This is an emergency notification. Please act immediately.\n\n"
             f"User: {emergency.get('user_name', 'User')}\n"
             f"Trigger: {emergency.get('trigger_type', 'AUTO')}\n"
             f"Risk Score: {emergency.get('risk_score', 0)}\n"
             f"Time: {emergency.get('created_at')}\n\n"
-            "Last known location:\n"
+            "Current location:\n"
             f"Latitude: {lat if lat is not None else 'unavailable'}\n"
-            f"Longitude: {lon if lon is not None else 'unavailable'}\n\n"
-            "Map:\n"
-            f"{map_url}\n\n"
-            "Live emergency dashboard:\n"
-            f"{base_url}/emergencies/{emergency['id']}"
+            f"Longitude: {lon if lon is not None else 'unavailable'}\n"
+            f"Map link: {map_url}\n"
+            f"Live tracking link: {location_link}\n\n"
+            f"Address: {address}\n"
+            f"Blood type: {blood_type}\n\n"
+            "Emergency contact numbers:\n"
+            f"{contacts_text}\n\n"
+            "Please contact the user immediately and if necessary call local emergency services."
         )
         msg.set_content(body)
-        with smtplib.SMTP(host, int(port)) as smtp:
-            smtp.starttls()
-            smtp.login(user, password)
-            smtp.send_message(msg)
-        return {"success": True}
+
+        if port_int == 465:
+            with smtplib.SMTP_SSL(host, port_int) as smtp:
+                smtp.login(user, password)
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port_int, timeout=30) as smtp:
+                if host.lower() not in {"localhost"}:
+                    smtp.starttls()
+                smtp.login(user, password)
+                smtp.send_message(msg)
+        return {"success": True, "recipient": recipient}
     except Exception as exc:  # pragma: no cover - network config only
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": str(exc), "recipient": recipient}
+
+
+@router.get("/settings/guardians")
+def get_guardian_settings():
+    settings = dict(store.guardian_settings)
+    settings["guardian_emails"] = [email for email in settings.get("guardian_emails", []) if email]
+    settings.setdefault("emergency_contacts", [])
+    settings.setdefault("emergency_profile", {
+        "name": "",
+        "address": "",
+        "blood_type": "",
+        "allergies": "",
+        "medical_conditions": "",
+    })
+    return settings
+
+
+@router.post("/settings/guardians")
+def save_guardian_settings(req: GuardianSettingsRequest):
+    emails = []
+    for email in req.guardian_emails or []:
+        cleaned = (email or "").strip()
+        if cleaned:
+            emails.append(cleaned)
+    if len(emails) < 2:
+        raise HTTPException(400, "At least two guardian emails are required")
+    contacts = []
+    for item in req.emergency_contacts or []:
+        number = (item.number or "").strip()
+        if number:
+            contacts.append({"label": (item.label or "Emergency").strip() or "Emergency", "number": number})
+    if len(contacts) < 2:
+        contacts = [{"label": "Police", "number": "112"}, {"label": "Emergency", "number": "108"}]
+    profile = {
+        "name": (req.emergency_profile.name or "").strip(),
+        "address": (req.emergency_profile.address or "").strip(),
+        "blood_type": (req.emergency_profile.blood_type or "").strip(),
+        "allergies": (req.emergency_profile.allergies or "").strip(),
+        "medical_conditions": (req.emergency_profile.medical_conditions or "").strip(),
+    }
+    store.guardian_settings = {
+        "guardian_emails": emails[:2],
+        "location_update_interval_minutes": max(1, int(req.location_update_interval_minutes or 5)),
+        "emergency_contacts": contacts[:2],
+        "emergency_profile": profile,
+    }
+    return store.guardian_settings
 
 
 @router.post("/journeys/start")
@@ -215,6 +296,16 @@ def journey_status(jid: str):
 @router.post("/signals")
 def record_signal(req: SignalEventRequest):
     journey = _journey(req.journey_id)
+    if journey.get("status") == "EMERGENCY_ACTIVE" and req.signal_type != "SAFE":
+        return {
+            "journey_id": req.journey_id,
+            "risk_score": 0,
+            "risk_level": "LOW",
+            "trigger_reasons": ["SOS ACTIVATED"],
+            "countdown_required": False,
+            "countdown_seconds": 0,
+            "status": "EMERGENCY_ACTIVE",
+        }
     if req.latitude is not None:
         journey["latitude"] = req.latitude
     if req.longitude is not None:
@@ -223,25 +314,25 @@ def record_signal(req: SignalEventRequest):
     if req.signal_type == "KEYWORD_DETECTED":
         current = journey.get("keyword_window_score", 0)
         if current == 0:
-            delta = 30
+            delta = 40
             reason = "Distress keyword detected"
         elif current < 70:
-            delta = min(20, 70 - current)
+            delta = min(25, 70 - current)
             reason = "Repeated distress keyword"
         else:
-            delta = 0
+            delta = 15
             reason = "Repeated distress keyword"
-        journey["keyword_window_score"] = min(70, current + delta)
+        journey["keyword_window_score"] = min(90, current + delta)
         journey["keyword_window_count"] = journey.get("keyword_window_count", 0) + 1
         signal_reason = reason
         risk = update_risk(journey, "KEYWORD_DETECTED", reason=signal_reason, delta=delta)
     elif req.signal_type == "EMOTION_DETECTED":
         emotion = (req.emotion or "neutral").lower()
         if emotion == "angry":
-            delta = 15
+            delta = 25
             signal_reason = "Angry voice tone"
         elif emotion == "sad":
-            delta = 5
+            delta = 10
             signal_reason = "Sad voice tone"
         else:
             delta = 0
@@ -256,6 +347,9 @@ def record_signal(req: SignalEventRequest):
     elif req.signal_type == "SAFE":
         journey["keyword_window_score"] = 0
         journey["keyword_window_count"] = 0
+        journey["status"] = "JOURNEY_ACTIVE"
+        journey["countdown_required"] = False
+        journey["countdown_seconds"] = 0
         risk = update_risk(journey, "SAFE")
     else:
         risk = compute_risk(journey)
@@ -263,14 +357,22 @@ def record_signal(req: SignalEventRequest):
     journey["risk_score"] = risk["risk_score"]
     journey["risk_level"] = risk["risk_level"]
     journey["trigger_reasons"] = risk["trigger_reasons"]
-    if risk["risk_level"] in {"HIGH", "CRITICAL"} and journey["status"] == "JOURNEY_ACTIVE":
+    if journey.get("status") == "EMERGENCY_ACTIVE":
+        journey["countdown_required"] = False
+        journey["countdown_seconds"] = 0
+        journey["risk_score"] = 0
+        journey["risk_level"] = "LOW"
+        journey["trigger_reasons"] = ["SOS ACTIVATED"]
+        return {"journey_id": req.journey_id, "risk_score": 0, "risk_level": "LOW", "trigger_reasons": ["SOS ACTIVATED"], "countdown_required": False, "countdown_seconds": 0, "status": "EMERGENCY_ACTIVE"}
+    if risk["risk_score"] >= 60:
         journey["countdown_required"] = True
         journey["countdown_seconds"] = 10
-        journey["status"] = "SUSPECTED_EMERGENCY"
+        if journey["status"] == "JOURNEY_ACTIVE":
+            journey["status"] = "SUSPECTED_EMERGENCY"
     else:
         journey["countdown_required"] = False
         journey["countdown_seconds"] = 0
-    return {"journey_id": req.journey_id, **risk, "countdown_required": journey.get("countdown_required", False), "countdown_seconds": journey.get("countdown_seconds", 0)}
+    return {"journey_id": req.journey_id, **risk, "countdown_required": journey.get("countdown_required", False), "countdown_seconds": journey.get("countdown_seconds", 0), "status": journey.get("status", "JOURNEY_ACTIVE")}
 
 
 @router.post("/emergencies")
@@ -289,16 +391,35 @@ def create_emergency(req: EmergencyCreateRequest):
         "accuracy": req.accuracy,
         "created_at": datetime.utcnow().isoformat() + "Z",
         "status": "ACTIVE",
-        "risk_score": 100 if req.trigger_type == "MANUAL" else max(0, int(journey.get("risk_score", 0))),
-        "risk_level": "CRITICAL" if req.trigger_type == "MANUAL" else _level_for(int(journey.get("risk_score", 0))),
-        "trigger_reasons": ["Manual SOS"] if req.trigger_type == "MANUAL" else list(journey.get("trigger_reasons", [])),
+        "risk_score": 0,
+        "risk_level": "LOW",
+        "trigger_reasons": ["Manual SOS"] if req.trigger_type == "MANUAL" else ["SOS ACTIVATED"],
     }
     store.emergencies[eid] = emergency
     journey["emergency_id"] = eid
-    journey["status"] = "EMERGENCY_ACTIVE" if req.trigger_type != "MANUAL" else "EMERGENCY_ACTIVE"
-    if req.trigger_type == "MANUAL":
-        _send_alert_email(emergency, "1")
-    return {"emergency_id": eid, **compute_risk(emergency), "status": emergency["status"]}
+    journey["status"] = "EMERGENCY_ACTIVE"
+    journey["risk_score"] = 0
+    journey["risk_level"] = "LOW"
+    journey["countdown_required"] = False
+    journey["countdown_seconds"] = 0
+    journey["trigger_reasons"] = ["SOS ACTIVATED"]
+    guardian_emails = [email.strip() for email in store.guardian_settings.get("guardian_emails", []) if email and email.strip()]
+    email_results = []
+    if guardian_emails:
+        for email in guardian_emails:
+            email_results.append(_send_alert_email(emergency, "guardian", recipient_email=email))
+    return {
+        "emergency_id": eid,
+        "status": "EMERGENCY_ACTIVE",
+        "risk_score": 0,
+        "risk_level": "LOW",
+        "countdown_required": False,
+        "countdown_seconds": 0,
+        "trigger_reasons": ["SOS ACTIVATED"],
+        "guardian_emails_sent": guardian_emails,
+        "email_results": email_results,
+        "email_status": "sent" if guardian_emails and all(result.get("success") for result in email_results) else "skipped" if not guardian_emails else "partial",
+    }
 
 
 @router.get("/emergencies/{eid}")
