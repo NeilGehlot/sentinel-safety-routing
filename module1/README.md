@@ -1,4 +1,4 @@
-# module 3 : AI Threat Assessment Engine
+# Module 3 : AI Threat Assessment Engine
 
 The threat assessment engine. `POST /v1/assess` scores a snapshot with the rule-based core and fills `predicted` with a 5 minute score and a 10 minute score. Those scores are a projection along the current speed and heading, not a forecast. A lower score is safer. When `MOCK_MODE` is not true, weather comes from Open-Meteo and the nearest safe place comes from OSM Overpass. Crime risk uses a LightGBM artifact when that file loads. Movement uses a random forest when a window is present and that artifact loads, and the existing rules otherwise. An LLM may phrase news severity and the explanation when `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` are set. It does not change the numeric score or the contributor points. The page is `GET /`. The API routes stay `POST /v1/assess` and `GET /v1/health`.
 
