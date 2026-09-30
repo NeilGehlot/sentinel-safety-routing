@@ -9,7 +9,6 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': 'http://localhost:8000',
-      '/v1': 'http://127.0.0.1:8741',
       '/journeys': 'http://localhost:8000',
       '/signals': 'http://localhost:8000',
       '/emergencies': 'http://localhost:8000',

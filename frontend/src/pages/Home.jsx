@@ -61,7 +61,7 @@ export default function Home() {
   const [isListening, setIsListening] = useState(false), [manualTranscript, setManualTranscript] = useState('help me')
   const [liveTranscript, setLiveTranscript] = useState('')
   const [activeNav, setActiveNav] = useState('Home')
-  const [departMode, setDepartMode] = useState('Now'), [departTime, setDepartTime] = useState('21:30'), [threat, setThreat] = useState(), [navCollapsed, setNavCollapsed] = useState(false)
+  const [departMode, setDepartMode] = useState('Now'), [departTime, setDepartTime] = useState('21:30'), [navCollapsed, setNavCollapsed] = useState(false)
   const [mapMode, setMapMode] = useState('safety'), [geoResults, setGeoResults] = useState([]), [geoBusy, setGeoBusy] = useState(false)
   const [currentPage, setCurrentPage] = useState('home')
   const [guardianEmails, setGuardianEmails] = useState([])
@@ -493,18 +493,6 @@ export default function Home() {
   const scoredRoutes = routes.map((r) => ({ ...r, high_risk_min: highRiskExposure(r, incidents).minutes, route_score: routeScore(r.safety, speedScore(r, minEta), preference), recommended: r.id === pickByPreference(routes, preference) }))
   const safePoints = safePointsFor(activeRoute)
   const departAt = departMode === 'Custom' ? departTime : undefined
-  const threatPoint = activeRoute?.geometry?.[Math.floor((activeRoute.geometry.length - 1) / 2)]
-  useEffect(() => {
-    if (!threatPoint) { setThreat(); return }
-    let live = true
-    const when = new Date(); if (departAt) { const [h, m] = departAt.split(':').map(Number); when.setHours(h, m, 0, 0) }
-    const off = -when.getTimezoneOffset(), pad = (n) => String(Math.floor(Math.abs(n))).padStart(2, '0')
-    const ts = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}:00${off >= 0 ? '+' : '-'}${pad(off / 60)}:${pad(off % 60)}`
-    setThreat({ loading: true })
-    api.assess({ session_id: 'route-' + (activeRoute.id || 'x'), timestamp: ts, location: { lat: threatPoint[0], lon: threatPoint[1], speed_mps: 1.4 }, device: { cellular_dbm: -95, internet_available: true, battery_pct: 80 }, movement: { activity: 'walking' }, nearby_devices: { wifi_count: 5, ble_count: 3 } })
-      .then((data) => live && setThreat({ data })).catch((e) => live && setThreat({ error: e.message || 'unreachable' }))
-    return () => { live = false }
-  }, [activeRoute?.id, threatPoint?.[0], threatPoint?.[1], departAt])
   const shown = st ? [{ id: st.route_id, geometry: st.geometry }] : routes
 
   if (currentPage === 'settings') {
@@ -643,7 +631,7 @@ export default function Home() {
         <div className="map-column"><div className="map-toolbar"><div className="map-tabs">{[['safety', '◉ Safety View'], ['safepoints', '⌖ Safe Points'], ['heatmap', '◌ Risk Heatmap'], ['time', '◷ Time Profile']].map(([k, label]) => <button type="button" key={k} className={mapMode === k ? 'active' : ''} onClick={() => setMapMode(k)}>{label}</button>)}</div><span className="map-expand">⛶</span></div><MapView routes={shown} selectedId={jid ? st?.route_id : sel} alt={st?.reroute?.alternative} incidents={st?.incidents_ahead || []} heatmapIncidents={incidents} position={gps || st?.position} start={start} dest={dest} mode={mapMode} safePoints={safePoints} onMapClick={mapClick} />{mapMode === 'time' && <div className="time-overlay panel"><b>Time profile for this area</b><TimeProfileTable route={activeRoute} preference={preference} minEta={minEta} /></div>}</div>
         <div className="intel-column"><SafetyProfile route={activeRoute} preference={preference} minEta={minEta} /><SafePointPanel route={activeRoute} points={safePoints} /><IndependencePanel routes={routes} incidents={incidents} /><IncidentSummary incidents={incidents} /></div>
       </section>
-      <AnalysisPanel route={scoredRoutes.find((r) => r.id === activeRoute?.id) || activeRoute} incidents={incidents} analysis={st?.reroute_analysis} routes={routes} threat={threat} />
+      <AnalysisPanel route={scoredRoutes.find((r) => r.id === activeRoute?.id) || activeRoute} incidents={incidents} analysis={st?.reroute_analysis} routes={routes} />
     </main>
   </div>)
 }
