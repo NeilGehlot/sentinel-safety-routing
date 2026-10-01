@@ -130,10 +130,12 @@ def wire_complete(fn: CompleteFn | None) -> None:
 
 def ready() -> bool:
     """True when provider, model, and key are all set. An empty key is not ready."""
+    provider = config.LLM_PROVIDER.strip().lower()
+    api_key = config.GROK_API_KEY if provider == "grok" else config.LLM_API_KEY
     return bool(
-        config.LLM_PROVIDER.strip()
+        provider
         and config.LLM_MODEL.strip()
-        and config.LLM_API_KEY.strip()
+        and api_key.strip()
     )
 
 
@@ -278,12 +280,40 @@ def _http_complete(system: str, user: str) -> str:
         return _openai(system, user, timeout)
     if provider == "anthropic":
         return _anthropic(system, user, timeout)
+    if provider == "grok":
+        return _grok(system, user, timeout)
     raise RuntimeError("LLM provider is not supported.")
 
 
 def _openai(system: str, user: str, timeout: httpx.Timeout) -> str:
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
+    return _openai_compatible(
+        system,
+        user,
+        timeout,
+        url="https://api.openai.com/v1/chat/completions",
+        api_key=config.LLM_API_KEY,
+    )
+
+
+def _grok(system: str, user: str, timeout: httpx.Timeout) -> str:
+    return _openai_compatible(
+        system,
+        user,
+        timeout,
+        url="https://api.x.ai/v1/chat/completions",
+        api_key=config.GROK_API_KEY,
+    )
+
+
+def _openai_compatible(
+    system: str,
+    user: str,
+    timeout: httpx.Timeout,
+    *,
+    url: str,
+    api_key: str,
+) -> str:
+    headers = {"Authorization": f"Bearer {api_key}"}
     body = {
         "model": config.LLM_MODEL,
         "temperature": 0,
