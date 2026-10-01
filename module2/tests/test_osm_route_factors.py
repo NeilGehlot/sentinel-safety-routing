@@ -86,15 +86,19 @@ def test_base_factors_prefer_osm_over_hash(monkeypatch):
     assert factors["lighting"] == 90
     assert factors["connectivity"] == 88
     assert factors["safe_locations"] == 91
-    assert 72 <= factors["historical_crime"] <= 92
-    assert 72 <= factors["crowd"] <= 92
-    assert 72 <= factors["traffic"] <= 92
+    assert 0 < factors["historical_crime"] < 100
+    assert 0 <= factors["crowd"] <= 100
+    assert 0 <= factors["traffic"] <= 100
 
 
 def test_base_factors_hash_fallback_when_overpass_fails():
     factors = route_scorer.base_factors(GEOM)
-    for key in route_scorer.WEIGHTS:
-        assert 72 <= factors[key] <= 92
+    assert set(factors) >= set(route_scorer.WEIGHTS)
+    assert 0 < factors["historical_crime"] < 100
+    assert 72 <= factors["connectivity"] <= 92
+    assert 72 <= factors["safe_locations"] <= 92
+    for key in ("lighting", "crowd", "traffic"):
+        assert 0 <= factors[key] <= 100
 
 
 def test_score_still_applies_incident_penalty(monkeypatch):

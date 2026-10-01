@@ -24,6 +24,7 @@ SENTINEL is a multi-module safety prototype combining real-time safe-route monit
 - Backend: FastAPI
 - Data: in-memory prototype store for hackathon/demo use
 - Maps: Leaflet + OpenStreetMap
+- Module 2 route score: 22.5% historical crime lookup (district/city gazetteer); lighting, crowd, traffic, connectivity, and safe_locations keep their original relative shares scaled to 77.5%. Incident penalties still apply. Compact JSON lookups live in `module2/data/` (no raw NCRB CSVs).
 
 ## Run the Project
 
