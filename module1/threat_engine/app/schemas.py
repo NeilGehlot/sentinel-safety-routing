@@ -102,3 +102,19 @@ class HealthResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: str
+
+
+class AssistantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str
+    risk_score: int | None = None
+    risk_level: str | None = None
+    route_safety: int | None = None
+    nearby_safe_places: list[str] = Field(default_factory=list)
+
+
+class AssistantResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str

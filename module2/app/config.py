@@ -88,6 +88,7 @@ class Settings:
     emergency_location_update_interval_ms: int = _int("EMERGENCY_LOCATION_UPDATE_INTERVAL_MS", 3000)
     safety_countdown_seconds: int = _int("SAFETY_COUNTDOWN_SECONDS", 10)
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
+    module1_url: str = os.getenv("MODULE1_URL", "http://127.0.0.1:8741")
 
     # --------------------------------------------------------
     # SMTP (guardian alert emails); EMAIL_* names are accepted as fallbacks

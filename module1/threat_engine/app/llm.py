@@ -33,6 +33,24 @@ EXPLAIN_SYSTEM = (
     "Do not change the numeric score or the contributor points."
 )
 
+ASSISTANT_SYSTEM = (
+    "You are a calm, concise safety assistant inside a personal-safety app. "
+    "You are given the user's current risk score (0-100, higher is riskier), risk level, "
+    "route safety score if available, and a short list of nearby safe places if available. "
+    "Answer the user's question using only this data. "
+    "Never invent an incident, a location, or a statistic that was not supplied. "
+    "Never claim the user is being followed or attacked. "
+    "Keep answers to 2-3 sentences. "
+    "Return only JSON with a single key: answer."
+)
+
+ASSISTANT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["answer"],
+    "properties": {"answer": {"type": "string", "minLength": 1}},
+}
+
 NEWS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -143,6 +161,30 @@ def phrase_explanation(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
     _EXPLAIN_CACHE[key] = parsed
     return parsed
+
+
+def answer_assistant_question(question: str, context: dict[str, Any]) -> str | None:
+    """One safety-assistant answer, or None when the call cannot be used."""
+    if not ready() or not question.strip():
+        return None
+    if config.MOCK_MODE:
+        return None
+    user_payload = json.dumps({"question": question.strip(), "context": context})
+    try:
+        raw = (
+            _OVERRIDE(ASSISTANT_SYSTEM, user_payload)
+            if _OVERRIDE is not None
+            else _http_complete(ASSISTANT_SYSTEM, user_payload)
+        )
+        parsed = _parse_json(raw)
+    except Exception:
+        return None
+    validated = _validate(parsed, ASSISTANT_SCHEMA)
+    if validated is None:
+        return None
+    if any(token in validated["answer"].lower() for token in _FORBIDDEN):
+        return None
+    return validated["answer"]
 
 
 def _complete_json(system: str, user: str, schema: dict[str, Any]) -> dict[str, Any] | None:

@@ -16,8 +16,9 @@ from app.config import (
     KEYWORD_WINDOW_CAP,
     settings,
 )
-from app.models.schemas import EmergencyCreateRequest, EmergencyResolveRequest, EmergencyResponse, GuardianSettingsRequest, SignalEventRequest, SosJourneyStartRequest
+from app.models.schemas import AssistantAskRequest, EmergencyCreateRequest, EmergencyResolveRequest, EmergencyResponse, GuardianSettingsRequest, SignalEventRequest, SosJourneyStartRequest
 from app.services import store
+from app.services.module1_client import ask_assistant
 from app.services.risk_engine import compute_risk, level_for_score, update_risk
 
 logger = logging.getLogger(__name__)
@@ -175,7 +176,7 @@ def _send_alert_email(emergency, recipient_email):
             for item in emergency_contacts if item.get("number")
         ) or "- No emergency contacts configured"
         map_url = "unavailable" if lat is None or lon is None else f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=17/{lat}/{lon}"
-        location_link = f"{base_url}/?lat={lat}&lng={lon}" if lat is not None and lon is not None else "Location unavailable"
+        dashboard_link = f"{base_url}/dashboard/{emergency['id']}"
         body = (
             "URGENT SOS ALERT\n\n"
             "This is an emergency notification. Please act immediately.\n\n"
@@ -187,7 +188,7 @@ def _send_alert_email(emergency, recipient_email):
             f"Latitude: {lat if lat is not None else 'unavailable'}\n"
             f"Longitude: {lon if lon is not None else 'unavailable'}\n"
             f"Map link: {map_url}\n"
-            f"Live tracking link: {location_link}\n\n"
+            f"Live dashboard: {dashboard_link}\n\n"
             f"Address: {address}\n"
             f"Blood type: {blood_type}\n\n"
             "Emergency contact numbers:\n"
@@ -273,6 +274,17 @@ def start_journey(req: SosJourneyStartRequest):
         "longitude": req.longitude,
     }
     return {"journey_id": jid, "status": "JOURNEY_ACTIVE"}
+
+
+@router.post("/assistant/ask")
+def assistant_ask(req: AssistantAskRequest):
+    journey = store.sos_journeys.get(req.journey_id) if req.journey_id else None
+    answer = ask_assistant(
+        question=req.question,
+        risk_score=journey.get("risk_score") if journey else None,
+        risk_level=journey.get("risk_level") if journey else None,
+    )
+    return {"answer": answer}
 
 
 @router.post("/journeys/{jid}/end")

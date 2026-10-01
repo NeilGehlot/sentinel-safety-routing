@@ -76,6 +76,12 @@ class EmergencyCreateRequest(BaseModel):
 class EmergencyResolveRequest(BaseModel):
     reason: str = "SAFE"
 
+
+class AssistantAskRequest(BaseModel):
+    question: str
+    journey_id: Optional[str] = None
+
+
 class EmergencyResponse(BaseModel):
     id: str
     journey_id: str
