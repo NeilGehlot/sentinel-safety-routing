@@ -18,7 +18,7 @@ from app.config import (
 )
 from app.models.schemas import AssistantAskRequest, EmergencyCreateRequest, EmergencyResolveRequest, EmergencyResponse, GuardianSettingsRequest, SignalEventRequest, SosJourneyStartRequest
 from app.services import store
-from app.services.assistant import ask as ask_safety_assistant, provider_status
+from app.services.assistant import ask as ask_safety_assistant, compose_context, provider_status
 from app.services.risk_engine import compute_risk, level_for_score, update_risk
 
 logger = logging.getLogger(__name__)
@@ -278,15 +278,14 @@ def start_journey(req: SosJourneyStartRequest):
 
 @router.post("/assistant/ask")
 def assistant_ask(req: AssistantAskRequest):
-    journey = store.sos_journeys.get(req.journey_id) if req.journey_id else None
     return ask_safety_assistant(
         req.question,
-        {
-            "risk_score": journey.get("risk_score") if journey else None,
-            "risk_level": journey.get("risk_level") if journey else None,
-            "route_safety": None,
-            "nearby_safe_places": [],
-        },
+        compose_context(
+            sos_journey_id=req.journey_id,
+            nav_journey_id=req.nav_journey_id,
+            route_id=req.route_id,
+            client=req.context,
+        ),
     )
 
 
@@ -318,6 +317,11 @@ def journey_status(jid: str):
         "countdown_seconds": journey.get("countdown_seconds", 0),
         "latitude": journey.get("latitude"),
         "longitude": journey.get("longitude"),
+        "sos_trigger": journey.get("sos_trigger"),
+        "email_status": journey.get("email_status"),
+        "help_alerted": journey.get("help_alerted"),
+        "guardian_count": journey.get("guardian_count"),
+        "emergency_id": journey.get("emergency_id"),
     }
 
 
@@ -435,6 +439,17 @@ def create_emergency(req: EmergencyCreateRequest):
     journey["trigger_reasons"] = ["SOS ACTIVATED"]
     guardian_emails = _guardian_emails()
     email_results = [_send_alert_email(emergency, email) for email in guardian_emails]
+    email_status = (
+        "sent"
+        if guardian_emails and all(result.get("success") for result in email_results)
+        else "skipped"
+        if not guardian_emails
+        else "partial"
+    )
+    journey["sos_trigger"] = req.trigger_type
+    journey["help_alerted"] = email_status in {"sent", "partial"}
+    journey["email_status"] = email_status
+    journey["guardian_count"] = len(guardian_emails)
     return {
         "emergency_id": eid,
         "status": "EMERGENCY_ACTIVE",
@@ -443,9 +458,12 @@ def create_emergency(req: EmergencyCreateRequest):
         "countdown_required": False,
         "countdown_seconds": 0,
         "trigger_reasons": ["SOS ACTIVATED"],
+        "sos_trigger": req.trigger_type,
+        "help_alerted": email_status in {"sent", "partial"},
+        "email_status": email_status,
+        "guardian_count": len(guardian_emails),
         "guardian_emails_sent": guardian_emails,
         "email_results": email_results,
-        "email_status": "sent" if guardian_emails and all(result.get("success") for result in email_results) else "skipped" if not guardian_emails else "partial",
     }
 
 

@@ -41,6 +41,23 @@ cp .env.example .env
 ```
 Use the required values for any SMTP or frontend env vars you want to test. The app also supports route/journey demo config values such as polling and timing intervals. For real route search, set `ORS_API_KEY` in the environment.
 
+### Safety assistant (local Ollama)
+
+The chatbot on the dashboard calls `POST /assistant/ask` in Module 2. To use a local model:
+
+1. Install [Ollama](https://ollama.com) and pull the model: `ollama pull qwen3:4b`
+2. Keep Ollama running (`ollama serve` if it is not already a system service)
+3. In `.env` (repo root or `module2/.env`) set:
+
+```
+LLM_PROVIDER=ollama
+LLM_MODEL=qwen3:4b
+MOCK_MODE=false
+LLM_TIMEOUT_SECONDS=120
+```
+
+No API key is required. `MOCK_MODE` must be `false` or the assistant stays on the offline fallback. Restart `uvicorn` after changing `.env`.
+
 ### 3) Start the backend
 ```bash
 cd module2

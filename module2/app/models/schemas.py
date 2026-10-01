@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 IncidentType = Literal["accident","road_closure","fire","flooding","protest","crime","traffic","other"]
@@ -80,6 +80,9 @@ class EmergencyResolveRequest(BaseModel):
 class AssistantAskRequest(BaseModel):
     question: str
     journey_id: Optional[str] = None
+    nav_journey_id: Optional[str] = None
+    route_id: Optional[str] = None
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 class EmergencyResponse(BaseModel):
