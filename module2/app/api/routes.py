@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from app.models.schemas import SearchRequest, RecalcRequest
 from app.services import navigation_service as nav, route_matcher, route_scorer, store
 
@@ -32,6 +32,14 @@ def geocode(q: str):
         return [{"name": p["display_name"], "latitude": float(p["lat"]), "longitude": float(p["lon"])} for p in res.json()]
     except (httpx.HTTPError, ValueError, KeyError):
         return []
+
+@router.get("/point-safety")
+def point_safety(
+    latitude: float = Query(...),
+    longitude: float = Query(...),
+):
+    """Live pin/GPS score: lighting/crowd/traffic at this point; crime only if district/city changes."""
+    return route_scorer.score_point(latitude, longitude, store.incidents)
 
 @router.post("/recalculate")
 def recalc(req: RecalcRequest):
