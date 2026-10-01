@@ -1,4 +1,4 @@
-"""Recommended route = OSM lighting/connectivity/safe_locations + shortest path."""
+"""Recommended route = OSM quality + historical crime + shortest path."""
 from app.services import route_scorer
 
 
@@ -7,7 +7,7 @@ def _route(rid, duration_s, lighting, connectivity, safe_locations, extra=None):
         "lighting": lighting,
         "connectivity": connectivity,
         "safe_locations": safe_locations,
-        "historical_crime": 99,
+        "historical_crime": 70,
         "crowd": 99,
         "traffic": 99,
     }
@@ -30,13 +30,13 @@ def _recommended(routes):
 
 
 def test_shorter_and_safer_beats_longer_and_worse():
-    better = _route("short_safe", 600, 90, 88, 92)
-    worse = _route("long_unsafe", 1200, 45, 42, 40)
+    better = _route("short_safe", 600, 90, 88, 92, extra={"historical_crime": 90})
+    worse = _route("long_unsafe", 1200, 45, 42, 40, extra={"historical_crime": 40})
     assert _recommended([worse, better]) == "short_safe"
     assert better["rank_score"] > worse["rank_score"]
 
 
-def test_equal_osm_prefers_shortest_duration():
+def test_equal_osm_and_crime_prefers_shortest_duration():
     fast = _route("fast", 400, 70, 70, 70)
     slow = _route("slow", 900, 70, 70, 70)
     assert _recommended([slow, fast]) == "fast"
@@ -48,11 +48,18 @@ def test_equal_duration_prefers_better_osm_factors():
     assert _recommended([dark, lit]) == "lit"
 
 
-def test_crowd_traffic_crime_do_not_change_selection():
-    a = _route("a", 700, 80, 80, 80, extra={"crowd": 10, "traffic": 10, "historical_crime": 10})
-    b = _route("b", 700, 80, 80, 80, extra={"crowd": 99, "traffic": 99, "historical_crime": 99})
+def test_crowd_traffic_do_not_change_selection():
+    a = _route("a", 700, 80, 80, 80, extra={"crowd": 10, "traffic": 10, "historical_crime": 70})
+    b = _route("b", 700, 80, 80, 80, extra={"crowd": 99, "traffic": 99, "historical_crime": 70})
     route_scorer.mark_recommended([a, b])
     assert a["rank_score"] == b["rank_score"]
+
+
+def test_lower_historical_crime_safety_loses_when_osm_and_duration_match():
+    safer = _route("safer_crime", 700, 80, 80, 80, extra={"historical_crime": 90})
+    riskier = _route("riskier_crime", 700, 80, 80, 80, extra={"historical_crime": 20})
+    assert _recommended([riskier, safer]) == "safer_crime"
+    assert safer["rank_score"] > riskier["rank_score"]
 
 
 def test_safer_osm_can_beat_slightly_longer_route():
@@ -61,7 +68,13 @@ def test_safer_osm_can_beat_slightly_longer_route():
     assert _recommended([shorter_worse, longer_safer]) == "safer"
 
 
-def test_rank_formula_is_weighted_osm_plus_shortest():
-    factors = {"lighting": 90, "connectivity": 60, "safe_locations": 30}
-    # osm_quality = 60; shortest vs 100s duration = 50; rank = 0.6*60 + 0.4*50 = 56
-    assert route_scorer.rank_score(factors, 200, 100) == 56.0
+def test_rank_formula_is_osm_crime_and_shortest():
+    factors = {
+        "lighting": 90,
+        "connectivity": 60,
+        "safe_locations": 30,
+        "historical_crime": 80,
+    }
+    # osm_quality = 60; crime = 80; shortest vs 100s duration = 50
+    # rank = 0.45*60 + 0.25*80 + 0.30*50 = 27 + 20 + 15 = 62
+    assert route_scorer.rank_score(factors, 200, 100) == 62.0

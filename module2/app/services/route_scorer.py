@@ -1,7 +1,7 @@
 """Route scoring: 22.5% historical crime lookup; five original live/hash factors share 77.5%.
 
 Lighting, connectivity, and safe_locations prefer OSM Overpass when available.
-Recommended-route ranking uses those OSM factors plus shortest duration.
+Recommended-route ranking uses OSM quality, historical-crime lookup, and shortest duration.
 """
 import hashlib
 from datetime import datetime, timezone
@@ -31,11 +31,13 @@ _OSM_FACTORS = ("lighting", "connectivity", "safe_locations")
 
 # Recommended-route ranking among real ORS (or mock) candidates:
 #   osm_quality = (lighting + connectivity + safe_locations) / 3     # 0–100
+#   crime       = historical_crime factor (NCRB lookup safety_score) # 0–100
 #   shortest    = 100 * min(duration_s) / duration_s                 # 100 = fastest
-#   rank_score  = 0.6 * osm_quality + 0.4 * shortest
-# crowd, traffic, and historical_crime are not used for selection.
-OSM_RANK_WEIGHT = 0.6
-SHORTEST_RANK_WEIGHT = 0.4
+#   rank_score  = 0.45 * osm_quality + 0.25 * crime + 0.30 * shortest
+# crowd and traffic are not used for selection. Pin safety still uses WEIGHTS.
+OSM_RANK_WEIGHT = 0.45
+CRIME_RANK_WEIGHT = 0.25
+SHORTEST_RANK_WEIGHT = 0.30
 
 
 def _clamp(v: float) -> float:
@@ -191,9 +193,15 @@ def shortest_index(duration_s, min_duration_s) -> float:
     return 100.0 * min_duration_s / duration_s
 
 
+def crime_quality(factors) -> float:
+    return float(factors.get("historical_crime", 0))
+
+
 def rank_score(factors, duration_s, min_duration_s) -> float:
-    return OSM_RANK_WEIGHT * osm_quality(factors) + SHORTEST_RANK_WEIGHT * shortest_index(
-        duration_s, min_duration_s
+    return (
+        OSM_RANK_WEIGHT * osm_quality(factors)
+        + CRIME_RANK_WEIGHT * crime_quality(factors)
+        + SHORTEST_RANK_WEIGHT * shortest_index(duration_s, min_duration_s)
     )
 
 
