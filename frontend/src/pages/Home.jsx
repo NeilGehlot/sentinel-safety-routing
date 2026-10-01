@@ -70,6 +70,8 @@ export default function Home() {
   const [activeNav, setActiveNav] = useState('Home')
   const [departMode, setDepartMode] = useState('Now'), [departTime, setDepartTime] = useState('21:30'), [navCollapsed, setNavCollapsed] = useState(false)
   const [mapMode, setMapMode] = useState('safety'), [geoResults, setGeoResults] = useState([]), [geoBusy, setGeoBusy] = useState(false)
+  const [livePoint, setLivePoint] = useState()
+  const liveCrimeKey = useRef()
   const [currentPage, setCurrentPage] = useState('home')
   const [fakeCallActive, setFakeCallActive] = useState(false)
   const [guardianEmails, setGuardianEmails] = useState([])
@@ -340,6 +342,18 @@ export default function Home() {
     const local = PLACES.filter((p) => p.name.toLowerCase().includes(q.toLowerCase())), found = await api.geocode(q).catch(() => [])
     setGeoBusy(false); const all = [...local, ...found]; setGeoResults(all); if (!all.length) setErr('No places found. Try another name or click the map to set the destination.') }
   const mapClick = (p) => { if (jid) return; pickDestination({ name: `Pinned ${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}`, ...p }) }
+  const onLivePoint = (p) => {
+    const lat = p.latitude, lng = p.longitude
+    api.pointSafety(lat, lng).then((body) => {
+      const key = body.crime?.place_key
+      if (liveCrimeKey.current && liveCrimeKey.current === key && body.factors) {
+        setLivePoint((prev) => prev ? { ...body, factors: { ...body.factors, historical_crime: prev.factors?.historical_crime ?? body.factors.historical_crime } } : body)
+      } else {
+        liveCrimeKey.current = key
+        setLivePoint(body)
+      }
+    }).catch(() => {})
+  }
   const stopRoute = async () => { if (jid) await api.stop(jid).catch(() => {}); if (watch.current !== undefined) { navigator.geolocation?.clearWatch(watch.current); watch.current = undefined } setJid(); setSt(); setGps(); setNote('Route stopped. Pick another route or destination.') }
   const minEta = routes.length ? Math.min(...routes.map((r) => r.eta_min)) : undefined
   const pickByPreference = (list, pref) => list.reduce((best, r) => !best || routeScore(r.safety, speedScore(r, Math.min(...list.map((x) => x.eta_min))), pref) > routeScore(best.safety, speedScore(best, Math.min(...list.map((x) => x.eta_min))), pref) ? r : best, undefined)?.id
@@ -652,8 +666,8 @@ export default function Home() {
       {err && <ErrorState message={err} />}{busy && <LoadingState text="Finding real road routes…" />}
       <section className="dashboard-grid">
         <div className="route-column"><div className="section-heading"><div><span className="eyebrow">Route planning</span><h2>Route Options <em>{routes.length || (jid ? 1 : 0)}</em></h2></div><select className="sort-select" defaultValue="recommended"><option value="recommended">Recommended</option></select></div>{!jid && scoredRoutes.map((r) => <RouteCard key={r.id} r={r} selected={r.id === sel} onSelect={setSel} />)}{!jid && !routes.length && <div className="empty-card"><span className="empty-icon">⌁</span><b>Find a safe route</b><p>Choose your destination and compare real road routes.</p></div>}{jid && st && <JourneyStatus s={st} />}{!jid && sel && <><SelectedRouteSummary r={selectedRoute} /><button className="start-button" onClick={begin}>START ROUTE <span>→</span></button></>}{jid && st && <><div className="journey-actions">{st.reroute && <RerouteCard rr={st.reroute} onSwitch={doSwitch} onKeep={keep} />}{!st.reroute && st.status !== 'completed' && <WhyNotCard analysis={st.reroute_analysis} />}{note && <p className="muted">{note}</p>}{!st.incidents_ahead.length && st.status !== 'completed' && <p className="muted">No incidents ahead.</p>}<button className="demo-button" onClick={inject}>Demo: inject accident 600 m ahead</button><button className="start-button stop-button" onClick={stopRoute}>{st.status === 'completed' ? 'END ROUTE' : 'STOP ROUTE'} <span>■</span></button></div></>}</div>
-        <div className="map-column"><div className="map-toolbar"><div className="map-tabs">{[['safety', '◉ Safety View'], ['safepoints', '⌖ Safe Points'], ['heatmap', '◌ Risk Heatmap'], ['time', '◷ Time Profile']].map(([k, label]) => <button type="button" key={k} className={mapMode === k ? 'active' : ''} onClick={() => setMapMode(k)}>{label}</button>)}</div><span className="map-expand">⛶</span></div><MapView routes={shown} selectedId={jid ? st?.route_id : sel} alt={st?.reroute?.alternative} incidents={st?.incidents_ahead || []} heatmapIncidents={incidents} position={gps || st?.position} start={start} dest={dest} mode={mapMode} safePoints={safePoints} onMapClick={mapClick} />{mapMode === 'time' && <div className="time-overlay panel"><b>Time profile for this area</b><TimeProfileTable route={activeRoute} preference={preference} minEta={minEta} /></div>}</div>
-        <div className="intel-column"><SafetyProfile route={activeRoute} preference={preference} minEta={minEta} /><SafePointPanel route={activeRoute} points={safePoints} /><IndependencePanel routes={routes} incidents={incidents} /><IncidentSummary incidents={incidents} /></div>
+        <div className="map-column"><div className="map-toolbar"><div className="map-tabs">{[['safety', '◉ Safety View'], ['safepoints', '⌖ Safe Points'], ['heatmap', '◌ Risk Heatmap'], ['time', '◷ Time Profile']].map(([k, label]) => <button type="button" key={k} className={mapMode === k ? 'active' : ''} onClick={() => setMapMode(k)}>{label}</button>)}</div><span className="map-expand">⛶</span></div><MapView routes={shown} selectedId={jid ? st?.route_id : sel} alt={st?.reroute?.alternative} incidents={st?.incidents_ahead || []} heatmapIncidents={incidents} position={gps || st?.position} start={start} dest={dest} mode={mapMode} safePoints={safePoints} onMapClick={mapClick} onLivePoint={onLivePoint} />{mapMode === 'time' && <div className="time-overlay panel"><b>Time profile for this area</b><TimeProfileTable route={activeRoute} preference={preference} minEta={minEta} /></div>}</div>
+        <div className="intel-column"><SafetyProfile route={activeRoute} preference={preference} minEta={minEta} livePoint={livePoint} /><SafePointPanel route={activeRoute} points={safePoints} /><IndependencePanel routes={routes} incidents={incidents} /><IncidentSummary incidents={incidents} /></div>
       </section>
       <AnalysisPanel route={activeRoute} incidents={incidents} analysis={st?.reroute_analysis} />
       <SafetyAssistantPanel sosJourney={sosJourney} />

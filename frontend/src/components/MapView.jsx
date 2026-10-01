@@ -12,15 +12,20 @@ export const segmentSafety = (base, a, b, incidents) => {
   const penalty = incidents.reduce((sum, i) => { const d = meters(mid, [i.latitude, i.longitude]); return d < 900 ? sum + (Number(i.severity) || .5) * 40 * (1 - d / 900) : sum }, 0)
   return Math.max(0, Math.min(100, base - penalty))
 }
-export default function MapView({ routes = [], selectedId, alt, incidents = [], heatmapIncidents = [], position, start, dest, mode = 'safety', safePoints = [], onMapClick }) {
-  const el = useRef(), map = useRef(), layer = useRef(), clickRef = useRef()
+export default function MapView({ routes = [], selectedId, alt, incidents = [], heatmapIncidents = [], position, start, dest, mode = 'safety', safePoints = [], onMapClick, onLivePoint }) {
+  const el = useRef(), map = useRef(), layer = useRef(), clickRef = useRef(), liveRef = useRef()
   clickRef.current = onMapClick
+  liveRef.current = onLivePoint
   useEffect(() => {
     if (!el.current) return undefined
     map.current = L.map(el.current, { zoomControl: true }).setView([26.92, 75.81], 12)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(map.current)
     layer.current = L.layerGroup().addTo(map.current)
     map.current.on('click', (e) => clickRef.current?.({ latitude: e.latlng.lat, longitude: e.latlng.lng }))
+    map.current.on('moveend', () => {
+      const c = map.current?.getCenter()
+      if (c) liveRef.current?.({ latitude: c.lat, longitude: c.lng })
+    })
     const frame = requestAnimationFrame(() => map.current?.invalidateSize())
     const resize = new ResizeObserver(() => map.current?.invalidateSize())
     resize.observe(el.current)
