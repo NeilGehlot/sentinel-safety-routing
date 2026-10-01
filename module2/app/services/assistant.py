@@ -109,7 +109,7 @@ def _http_error_status(exc: httpx.HTTPStatusError) -> str:
         elif code:
             category = re.sub(r"[^a-z0-9_]+", "_", str(code).lower()).strip("_")[:48]
     except Exception:
-        category = ""
+        pass
     return f"http_{status}:{category}" if category else f"http_{status}"
 
 
