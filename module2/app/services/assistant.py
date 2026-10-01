@@ -1,6 +1,7 @@
 """Provider-agnostic safety assistant owned entirely by Module 2."""
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -20,6 +21,7 @@ FALLBACK_ANSWER = (
 )
 SUPPORTED_PROVIDERS = {"openai", "anthropic", "grok", "groq"}
 FORBIDDEN = ("follow", "attack")
+DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
 
 
 def _api_key(provider: str) -> str:
@@ -37,12 +39,12 @@ def provider_status() -> dict[str, Any]:
         "provider": provider or "unconfigured",
         "supported": supported,
         "mock_mode": settings.mock_mode,
-        "model_configured": bool(settings.llm_model),
+        "model_configured": bool(_model(provider)),
         "key_configured": bool(_api_key(provider)),
         "ready": (
             supported
             and not settings.mock_mode
-            and bool(settings.llm_model)
+            and bool(_model(provider))
             and bool(_api_key(provider))
         ),
     }
@@ -56,11 +58,14 @@ def ask(question: str, context: dict[str, Any]) -> dict[str, str]:
 
     try:
         raw = _complete(provider, question.strip(), context)
-        payload = _parse_json(raw)
+        try:
+            payload = _parse_json(raw)
+        except (json.JSONDecodeError, ValueError):
+            payload = {"answer": raw.strip()}
     except httpx.TimeoutException:
         return {"answer": FALLBACK_ANSWER, "provider_status": "timeout"}
     except httpx.HTTPStatusError as exc:
-        return {"answer": FALLBACK_ANSWER, "provider_status": f"http_{exc.response.status_code}"}
+        return {"answer": FALLBACK_ANSWER, "provider_status": _http_error_status(exc)}
     except Exception:
         return {"answer": FALLBACK_ANSWER, "provider_status": "provider_error"}
 
@@ -78,13 +83,34 @@ def _preflight_status(provider: str, question: str) -> str | None:
         return "empty_question"
     if provider not in SUPPORTED_PROVIDERS:
         return "unsupported_provider" if provider else "missing_provider"
-    if not settings.llm_model:
+    if not _model(provider):
         return "missing_model"
     if not _api_key(provider):
         return "missing_key"
     if settings.mock_mode:
         return "mock_mode"
     return None
+
+
+def _model(provider: str) -> str:
+    return settings.llm_model or (DEFAULT_GROQ_MODEL if provider == "groq" else "")
+
+
+def _http_error_status(exc: httpx.HTTPStatusError) -> str:
+    status = exc.response.status_code
+    category = "authentication" if status == 401 else "rate_limited" if status == 429 else ""
+    try:
+        error = exc.response.json().get("error", {})
+        code = error.get("code") or error.get("type") or ""
+        message = str(error.get("message") or "")
+        lowered = f"{code} {message}".lower()
+        if "model" in lowered and any(token in lowered for token in ("not found", "not_found", "does not exist", "decommission")):
+            category = "model_not_found"
+        elif code:
+            category = re.sub(r"[^a-z0-9_]+", "_", str(code).lower()).strip("_")[:48]
+    except Exception:
+        category = ""
+    return f"http_{status}:{category}" if category else f"http_{status}"
 
 
 def _complete(provider: str, question: str, context: dict[str, Any]) -> str:
@@ -95,7 +121,13 @@ def _complete(provider: str, question: str, context: dict[str, Any]) -> str:
         "grok": "https://api.x.ai/v1/chat/completions",
         "groq": "https://api.groq.com/openai/v1/chat/completions",
     }
-    return _openai_compatible(urls[provider], _api_key(provider), question, context)
+    return _openai_compatible(
+        urls[provider],
+        _api_key(provider),
+        question,
+        context,
+        provider=provider,
+    )
 
 
 def _openai_compatible(
@@ -103,9 +135,11 @@ def _openai_compatible(
     api_key: str,
     question: str,
     context: dict[str, Any],
+    *,
+    provider: str,
 ) -> str:
     body = {
-        "model": settings.llm_model,
+        "model": _model(provider),
         "temperature": 0,
         "max_tokens": settings.llm_max_tokens,
         "messages": [
@@ -115,8 +149,9 @@ def _openai_compatible(
                 "content": json.dumps({"question": question, "context": context}),
             },
         ],
-        "response_format": {"type": "json_object"},
     }
+    if provider != "groq":
+        body["response_format"] = {"type": "json_object"}
     with httpx.Client(timeout=settings.llm_timeout_seconds) as client:
         response = client.post(
             url,

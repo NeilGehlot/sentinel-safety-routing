@@ -59,6 +59,7 @@ def test_groq_success_request(monkeypatch):
     assert request["headers"] == {"Authorization": "Bearer groq-key"}
     assert request["json"]["model"] == "groq-model"
     assert request["json"]["messages"][1]["role"] == "user"
+    assert "response_format" not in request["json"]
 
 
 def test_missing_groq_key_falls_back_without_network(monkeypatch):
@@ -82,7 +83,7 @@ def test_missing_groq_key_falls_back_without_network(monkeypatch):
                 request=httpx.Request("POST", "https://api.groq.com"),
                 response=httpx.Response(401),
             ),
-            "http_401",
+            "http_401:authentication",
         ),
         (
             httpx.HTTPStatusError(
@@ -90,7 +91,7 @@ def test_missing_groq_key_falls_back_without_network(monkeypatch):
                 request=httpx.Request("POST", "https://api.groq.com"),
                 response=httpx.Response(429),
             ),
-            "http_429",
+            "http_429:rate_limited",
         ),
     ],
 )
@@ -116,3 +117,32 @@ def test_assistant_status_is_safe(monkeypatch):
     }
     assert "groq-key" not in response.text
     assert "groq-model" not in response.text
+
+
+def test_groq_404_model_error_is_informative(monkeypatch):
+    configure_groq(monkeypatch)
+    failure = httpx.HTTPStatusError(
+        "not found",
+        request=httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions"),
+        response=httpx.Response(
+            404,
+            request=httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions"),
+            json={"error": {"message": "The requested model does not exist."}},
+        ),
+    )
+    monkeypatch.setattr(assistant, "_complete", lambda *args: (_ for _ in ()).throw(failure))
+    response = client.post("/assistant/ask", json={"question": "What is my risk?"})
+    assert response.json()["provider_status"] == "http_404:model_not_found"
+    assert "groq-key" not in response.text
+
+
+def test_groq_default_model_and_plain_text_response(monkeypatch):
+    configure_groq(monkeypatch)
+    monkeypatch.setattr(settings, "llm_model", "")
+    monkeypatch.setattr(assistant, "_complete", lambda *args: "Use the displayed risk score.")
+    response = client.post("/assistant/ask", json={"question": "What is my risk?"})
+    assert response.json() == {
+        "answer": "Use the displayed risk score.",
+        "provider_status": "ok",
+    }
+    assert assistant._model("groq") == "llama-3.1-8b-instant"
