@@ -1,5 +1,8 @@
 ﻿import { useEffect, useRef, useState } from 'react'
+import { Phone } from 'lucide-react'
+import IncomingCallScreen from '../components/IncomingCallScreen.jsx'
 import MapView from '../components/MapView.jsx'
+import SafetyAssistantPanel from '../components/SafetyAssistantPanel.jsx'
 import { TimeProfileTable, DepartCompare, highRiskExposure, speedScore, routeScore, RouteCard, SelectedRouteSummary, RerouteCard, WhyNotCard, IncidentSummary, SafetyProfile, SafePointPanel, IndependencePanel, AnalysisPanel, JourneyStatus, LoadingState, ErrorState } from '../components/Parts.jsx'
 import { api, PLACES, POLL_MS } from '../services/api.js'
 import KEYWORDS from '../data/distress-keywords.json'
@@ -68,6 +71,7 @@ export default function Home() {
   const [departMode, setDepartMode] = useState('Now'), [departTime, setDepartTime] = useState('21:30'), [navCollapsed, setNavCollapsed] = useState(false)
   const [mapMode, setMapMode] = useState('safety'), [geoResults, setGeoResults] = useState([]), [geoBusy, setGeoBusy] = useState(false)
   const [currentPage, setCurrentPage] = useState('home')
+  const [fakeCallActive, setFakeCallActive] = useState(false)
   const [guardianEmails, setGuardianEmails] = useState([])
   const [emergencyContacts, setEmergencyContacts] = useState([
     { label: 'Police', number: '112' },
@@ -516,7 +520,7 @@ export default function Home() {
   const shown = st ? [{ id: st.route_id, geometry: st.geometry }] : routes
 
   if (currentPage === 'settings') {
-    return (<div className={'dashboard settings-page-shell' + (navCollapsed ? ' nav-collapsed' : '')}>
+    return (<>{fakeCallActive && <IncomingCallScreen onDismiss={() => setFakeCallActive(false)} />}<div className={'dashboard settings-page-shell' + (navCollapsed ? ' nav-collapsed' : '')}>
       <aside className={'sidebar' + (navCollapsed ? ' collapsed' : '')}>
         <div className="brand"><span className="brand-mark">✦</span><div className="nav-text"><strong>SENTINEL</strong><small>Safe navigation</small></div><button type="button" className="collapse-toggle" onClick={() => setNavCollapsed((v) => !v)} title="Toggle sidebar">{navCollapsed ? '»' : '«'}</button></div>
         <nav className="sidebar-nav">{navItems.map(({ icon, label }) => (
@@ -560,10 +564,10 @@ export default function Home() {
           </div>
         </section>
       </main>
-    </div>)
+    </div></>)
   }
 
-  return (<div className={'dashboard' + (navCollapsed ? ' nav-collapsed' : '')}>
+  return (<>{fakeCallActive && <IncomingCallScreen onDismiss={() => setFakeCallActive(false)} />}<div className={'dashboard' + (navCollapsed ? ' nav-collapsed' : '')}>
     <aside className={'sidebar' + (navCollapsed ? ' collapsed' : '')}>
       <div className="brand"><span className="brand-mark">✦</span><div className="nav-text"><strong>SENTINEL</strong><small>Safe navigation</small></div><button type="button" className="collapse-toggle" onClick={() => setNavCollapsed((v) => !v)} title="Toggle sidebar">{navCollapsed ? '»' : '«'}</button></div>
       <nav className="sidebar-nav">{navItems.map(({ icon, label }) => (
@@ -582,7 +586,7 @@ export default function Home() {
       <div className="sidebar-foot"><div className="avatar">A</div><div><b>Aarav</b><small>Stay safe.</small></div><span className="more">•••</span></div>
     </aside>
     <main className="workspace">
-      <header className="topbar"><div><span className="eyebrow">Safety-first navigation</span><h1>{jid ? 'Live journey' : 'Safe route planner'}</h1></div><div className="top-actions"><span className="status-chip"><span className="live-dot" />{jid ? 'Journey active' : 'Ready to plan'}</span><button type="button" className="sos-top-button" onClick={triggerTopBarSos} disabled={isEmergencyActive} title="Send manual SOS">SOS</button><button className="icon-button">?</button></div></header>
+      <header className="topbar"><div><span className="eyebrow">Safety-first navigation</span><h1>{jid ? 'Live journey' : 'Safe route planner'}</h1></div><div className="top-actions"><span className="status-chip"><span className="live-dot" />{jid ? 'Journey active' : 'Ready to plan'}</span><button type="button" className="sos-top-button" onClick={triggerTopBarSos} disabled={isEmergencyActive} title="Send manual SOS">SOS</button><button type="button" className="icon-button" onClick={() => setFakeCallActive(true)} title="Quick dial" aria-label="Quick dial"><Phone size={16} /></button><button className="icon-button">?</button></div></header>
       <section className="panel sos-panel">
         <div className="panel-heading">
           <div><span className="eyebrow">04 · Intelligent SOS</span><h2>Safety monitor</h2></div>
@@ -652,6 +656,7 @@ export default function Home() {
         <div className="intel-column"><SafetyProfile route={activeRoute} preference={preference} minEta={minEta} /><SafePointPanel route={activeRoute} points={safePoints} /><IndependencePanel routes={routes} incidents={incidents} /><IncidentSummary incidents={incidents} /></div>
       </section>
       <AnalysisPanel route={activeRoute} incidents={incidents} analysis={st?.reroute_analysis} />
+      <SafetyAssistantPanel sosJourney={sosJourney} />
     </main>
-  </div>)
+  </div></>)
 }

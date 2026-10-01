@@ -14,6 +14,7 @@ export default defineConfig({
       '/emergencies': 'http://localhost:8000',
       '/internal': 'http://localhost:8000',
       '/settings': 'http://localhost:8000',
+      '/assistant': 'http://localhost:8000',
     },
   },
 })

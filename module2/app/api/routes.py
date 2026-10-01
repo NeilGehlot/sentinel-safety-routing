@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from app.models.schemas import SearchRequest, RecalcRequest
 from app.services import navigation_service as nav, route_matcher, route_scorer, store
-from app.services.module1_client import current_threat
 
 router = APIRouter(prefix="/api/routes", tags=["routes"])
 
@@ -19,7 +18,7 @@ def search(req: SearchRequest):
     best = max(found, key=lambda x: x["safety"])
     for r in found:
         r["recommended"] = r is best
-    return {"routes": found, "module1_threat": current_threat(*s)}
+    return {"routes": found}
 
 @router.get("/geocode")
 def geocode(q: str):

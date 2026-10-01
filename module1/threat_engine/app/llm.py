@@ -33,6 +33,24 @@ EXPLAIN_SYSTEM = (
     "Do not change the numeric score or the contributor points."
 )
 
+ASSISTANT_SYSTEM = (
+    "You are a calm, concise safety assistant inside a personal-safety app. "
+    "You are given the user's current risk score (0-100, higher is riskier), risk level, "
+    "route safety score if available, and a short list of nearby safe places if available. "
+    "Answer the user's question using only this data. "
+    "Never invent an incident, a location, or a statistic that was not supplied. "
+    "Never claim the user is being followed or attacked. "
+    "Keep answers to 2-3 sentences. "
+    "Return only JSON with a single key: answer."
+)
+
+ASSISTANT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["answer"],
+    "properties": {"answer": {"type": "string", "minLength": 1}},
+}
+
 NEWS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -112,10 +130,17 @@ def wire_complete(fn: CompleteFn | None) -> None:
 
 def ready() -> bool:
     """True when provider, model, and key are all set. An empty key is not ready."""
+    provider = config.LLM_PROVIDER.strip().lower()
+    if provider == "grok":
+        api_key = config.GROK_API_KEY
+    elif provider == "groq":
+        api_key = config.GROQ_API_KEY
+    else:
+        api_key = config.LLM_API_KEY
     return bool(
-        config.LLM_PROVIDER.strip()
+        provider
         and config.LLM_MODEL.strip()
-        and config.LLM_API_KEY.strip()
+        and api_key.strip()
     )
 
 
@@ -143,6 +168,30 @@ def phrase_explanation(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
     _EXPLAIN_CACHE[key] = parsed
     return parsed
+
+
+def answer_assistant_question(question: str, context: dict[str, Any]) -> str | None:
+    """One safety-assistant answer, or None when the call cannot be used."""
+    if not ready() or not question.strip():
+        return None
+    if config.MOCK_MODE:
+        return None
+    user_payload = json.dumps({"question": question.strip(), "context": context})
+    try:
+        raw = (
+            _OVERRIDE(ASSISTANT_SYSTEM, user_payload)
+            if _OVERRIDE is not None
+            else _http_complete(ASSISTANT_SYSTEM, user_payload)
+        )
+        parsed = _parse_json(raw)
+    except Exception:
+        return None
+    validated = _validate(parsed, ASSISTANT_SCHEMA)
+    if validated is None:
+        return None
+    if any(token in validated["answer"].lower() for token in _FORBIDDEN):
+        return None
+    return validated["answer"]
 
 
 def _complete_json(system: str, user: str, schema: dict[str, Any]) -> dict[str, Any] | None:
@@ -236,12 +285,52 @@ def _http_complete(system: str, user: str) -> str:
         return _openai(system, user, timeout)
     if provider == "anthropic":
         return _anthropic(system, user, timeout)
+    if provider == "grok":
+        return _grok(system, user, timeout)
+    if provider == "groq":
+        return _groq(system, user, timeout)
     raise RuntimeError("LLM provider is not supported.")
 
 
 def _openai(system: str, user: str, timeout: httpx.Timeout) -> str:
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
+    return _openai_compatible(
+        system,
+        user,
+        timeout,
+        url="https://api.openai.com/v1/chat/completions",
+        api_key=config.LLM_API_KEY,
+    )
+
+
+def _grok(system: str, user: str, timeout: httpx.Timeout) -> str:
+    return _openai_compatible(
+        system,
+        user,
+        timeout,
+        url="https://api.x.ai/v1/chat/completions",
+        api_key=config.GROK_API_KEY,
+    )
+
+
+def _groq(system: str, user: str, timeout: httpx.Timeout) -> str:
+    return _openai_compatible(
+        system,
+        user,
+        timeout,
+        url="https://api.groq.com/openai/v1/chat/completions",
+        api_key=config.GROQ_API_KEY,
+    )
+
+
+def _openai_compatible(
+    system: str,
+    user: str,
+    timeout: httpx.Timeout,
+    *,
+    url: str,
+    api_key: str,
+) -> str:
+    headers = {"Authorization": f"Bearer {api_key}"}
     body = {
         "model": config.LLM_MODEL,
         "temperature": 0,

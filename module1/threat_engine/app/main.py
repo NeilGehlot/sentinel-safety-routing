@@ -12,8 +12,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import MOCK_MODE
 from app.engine import assess
-from app.llm import bind_explain, reset_explain
-from app.schemas import AssessRequest, AssessResponse, HealthResponse
+from app.llm import answer_assistant_question, bind_explain, reset_explain
+from app.schemas import AssistantRequest, AssistantResponse, AssessRequest, AssessResponse, HealthResponse
 
 _STATIC = Path(__file__).resolve().parent / "static"
 
@@ -29,6 +29,23 @@ def create_app() -> FastAPI:
     @application.get("/v1/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse(status="ok")
+
+    @application.post("/v1/assistant", response_model=AssistantResponse)
+    def assistant_endpoint(body: AssistantRequest) -> AssistantResponse:
+        context = {
+            "risk_score": body.risk_score,
+            "risk_level": body.risk_level,
+            "route_safety": body.route_safety,
+            "nearby_safe_places": body.nearby_safe_places,
+        }
+        answer = answer_assistant_question(body.question, context)
+        if answer is None:
+            answer = (
+                "I can't reach the assistant service right now. Your current risk level is shown "
+                "on the dashboard - please rely on that and contact your guardians directly if "
+                "you're concerned."
+            )
+        return AssistantResponse(answer=answer)
 
     @application.post("/v1/assess", response_model=AssessResponse)
     async def assess_endpoint(

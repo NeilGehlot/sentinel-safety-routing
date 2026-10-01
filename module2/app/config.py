@@ -59,6 +59,10 @@ def _int(key: str, default: int) -> int:
         return default
 
 
+def _bool(key: str, default: bool) -> bool:
+    return os.getenv(key, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
 # ============================================================
 # SETTINGS
 # ============================================================
@@ -88,6 +92,16 @@ class Settings:
     emergency_location_update_interval_ms: int = _int("EMERGENCY_LOCATION_UPDATE_INTERVAL_MS", 3000)
     safety_countdown_seconds: int = _int("SAFETY_COUNTDOWN_SECONDS", 10)
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
+
+    # Safety assistant
+    llm_provider: str = os.getenv("LLM_PROVIDER", "").strip().lower()
+    llm_model: str = os.getenv("LLM_MODEL", "").strip()
+    llm_api_key: str = os.getenv("LLM_API_KEY", "").strip()
+    grok_api_key: str = os.getenv("GROK_API_KEY", "").strip()
+    groq_api_key: str = os.getenv("GROQ_API_KEY", "").strip()
+    mock_mode: bool = _bool("MOCK_MODE", True)
+    llm_timeout_seconds: float = _float("LLM_TIMEOUT_SECONDS", 8.0)
+    llm_max_tokens: int = _int("LLM_MAX_TOKENS", 200)
 
     # --------------------------------------------------------
     # SMTP (guardian alert emails); EMAIL_* names are accepted as fallbacks
