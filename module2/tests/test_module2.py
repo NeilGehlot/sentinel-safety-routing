@@ -45,7 +45,10 @@ def test_full_demo_flow():
     body = {"start": {"latitude": S[0], "longitude": S[1]}, "destination": {"latitude": D[0], "longitude": D[1]}}
     res = c.post("/api/routes/search", json=body).json()
     assert 2 <= len(res["routes"]) <= 3
-    jid = c.post("/api/navigation/start", json={"route_id": res["routes"][0]["id"]}).json()["journey_id"]
+    recs = [r for r in res["routes"] if r.get("recommended")]
+    assert len(recs) == 1
+    assert "rank_score" in recs[0]
+    jid = c.post("/api/navigation/start", json={"route_id": recs[0]["id"]}).json()["journey_id"]
     assert c.get(f"/api/navigation/{jid}/status").json()["reroute"] is None
     assert c.post("/api/demo/inject-incident", json={"journey_id": jid}).status_code == 200
     st = c.get(f"/api/navigation/{jid}/status").json()
