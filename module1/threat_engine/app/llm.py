@@ -131,7 +131,12 @@ def wire_complete(fn: CompleteFn | None) -> None:
 def ready() -> bool:
     """True when provider, model, and key are all set. An empty key is not ready."""
     provider = config.LLM_PROVIDER.strip().lower()
-    api_key = config.GROK_API_KEY if provider == "grok" else config.LLM_API_KEY
+    if provider == "grok":
+        api_key = config.GROK_API_KEY
+    elif provider == "groq":
+        api_key = config.GROQ_API_KEY
+    else:
+        api_key = config.LLM_API_KEY
     return bool(
         provider
         and config.LLM_MODEL.strip()
@@ -282,6 +287,8 @@ def _http_complete(system: str, user: str) -> str:
         return _anthropic(system, user, timeout)
     if provider == "grok":
         return _grok(system, user, timeout)
+    if provider == "groq":
+        return _groq(system, user, timeout)
     raise RuntimeError("LLM provider is not supported.")
 
 
@@ -302,6 +309,16 @@ def _grok(system: str, user: str, timeout: httpx.Timeout) -> str:
         timeout,
         url="https://api.x.ai/v1/chat/completions",
         api_key=config.GROK_API_KEY,
+    )
+
+
+def _groq(system: str, user: str, timeout: httpx.Timeout) -> str:
+    return _openai_compatible(
+        system,
+        user,
+        timeout,
+        url="https://api.groq.com/openai/v1/chat/completions",
+        api_key=config.GROQ_API_KEY,
     )
 
 

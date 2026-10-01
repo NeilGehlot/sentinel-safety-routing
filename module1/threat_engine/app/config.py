@@ -25,6 +25,7 @@ LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "")
 LLM_MODEL: str = os.getenv("LLM_MODEL", "")
 LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
 GROK_API_KEY: str = os.getenv("GROK_API_KEY", "")
+GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 LLM_TIMEOUT_SECONDS: float = 8.0
 LLM_MAX_TOKENS: int = 200
 USE_LLM: bool = _as_bool(os.getenv("USE_LLM", "false"))

@@ -201,6 +201,76 @@ def test_grok_missing_key_uses_assistant_fallback(monkeypatch: pytest.MonkeyPatc
     assert response.json()["answer"].startswith("I can't reach the assistant service right now.")
 
 
+def test_groq_provider_dispatch_is_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "LLM_PROVIDER", "GrOq")
+    monkeypatch.setattr(config, "LLM_MODEL", "groq-test")
+    monkeypatch.setattr(config, "GROQ_API_KEY", "groq-key")
+    called = []
+    monkeypatch.setattr(llm, "_groq", lambda system, user, timeout: called.append((system, user, timeout)) or "ok")
+
+    assert llm._http_complete("system", "user") == "ok"
+    assert called[0][0:2] == ("system", "user")
+
+
+def test_groq_uses_chat_completions_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"choices": [{"message": {"content": '{"answer":"Stay calm."}'}}]}
+
+    class FakeClient:
+        def __init__(self, timeout) -> None:
+            request["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def post(self, url, headers, json):
+            request.update(url=url, headers=headers, json=json)
+            return FakeResponse()
+
+    monkeypatch.setattr(config, "LLM_MODEL", "groq-test")
+    monkeypatch.setattr(config, "GROQ_API_KEY", "groq-key")
+    monkeypatch.setattr(llm.httpx, "Client", FakeClient)
+
+    result = llm._groq("system", "user", httpx.Timeout(8))
+    assert result == '{"answer":"Stay calm."}'
+    assert request["url"] == "https://api.groq.com/openai/v1/chat/completions"
+    assert request["headers"] == {"Authorization": "Bearer groq-key"}
+    assert request["json"]["model"] == "groq-test"
+    assert request["json"]["messages"] == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "user"},
+    ]
+
+
+def test_groq_missing_key_uses_assistant_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "LLM_PROVIDER", "groq")
+    monkeypatch.setattr(config, "LLM_MODEL", "groq-test")
+    monkeypatch.setattr(config, "GROQ_API_KEY", "")
+    monkeypatch.setattr(config, "LLM_API_KEY", "openai-key-is-not-used")
+    monkeypatch.setattr(config, "MOCK_MODE", False)
+    monkeypatch.setattr(
+        llm.httpx,
+        "Client",
+        lambda *args, **kwargs: pytest.fail("Missing Groq key must not open a network client"),
+    )
+
+    response = TestClient(app).post(
+        "/v1/assistant",
+        json={"question": "What is my risk?", "risk_score": 40},
+    )
+    assert response.status_code == 200
+    assert response.json()["answer"].startswith("I can't reach the assistant service right now.")
+
+
 def test_forbidden_claim_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
     _enable(monkeypatch)
 
