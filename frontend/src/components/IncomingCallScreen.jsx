@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Phone } from 'lucide-react'
 
@@ -7,9 +7,14 @@ const CALLER_NUMBER = '+91 98765 43210'
 
 export default function IncomingCallScreen({ onDismiss }) {
   const audioRef = useRef(null)
+  const [answered, setAnswered] = useState(false)
 
   useEffect(() => {
     const dismiss = (event) => {
+      if (answered) {
+        if (event.type === 'popstate') window.history.pushState({ activeCall: true }, '')
+        return
+      }
       if (event.type === 'keydown' && event.key !== 'Escape') return
       onDismiss()
     }
@@ -22,11 +27,35 @@ export default function IncomingCallScreen({ onDismiss }) {
       window.removeEventListener('popstate', dismiss)
       audioRef.current?.pause()
     }
-  }, [onDismiss])
+  }, [answered, onDismiss])
 
   const dismiss = () => {
     audioRef.current?.pause()
     onDismiss()
+  }
+
+  const answer = () => {
+    audioRef.current?.pause()
+    if (audioRef.current) audioRef.current.currentTime = 0
+    setAnswered(true)
+  }
+
+  if (answered) {
+    return (
+      <div className="incoming-call active-call" role="dialog" aria-modal="true" aria-label="Active call">
+        <div className="incoming-call-content">
+          <div className="caller-avatar">M</div>
+          <p className="incoming-label">Connected</p>
+          <h1>{CALLER_NAME}</h1>
+          <p className="caller-number">{CALLER_NUMBER}</p>
+          <p className="caller-type">Mobile</p>
+        </div>
+        <button type="button" className="call-action decline end-call" onClick={dismiss} aria-label="End call">
+          <Phone />
+          <span>End</span>
+        </button>
+      </div>
+    )
   }
 
   return (
@@ -51,7 +80,7 @@ export default function IncomingCallScreen({ onDismiss }) {
           <Phone />
           <span>Decline</span>
         </button>
-        <button type="button" className="call-action answer" onClick={dismiss} aria-label="Answer call">
+        <button type="button" className="call-action answer" onClick={answer} aria-label="Answer call">
           <Phone />
           <span>Answer</span>
         </button>
