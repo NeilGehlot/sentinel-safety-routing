@@ -1,5 +1,8 @@
 import { motion } from 'framer-motion'
 import { segmentSafety } from './MapView.jsx'
+import { speedScore, routeScore, profileAt, timeProfile } from '../lib/routeProfile.js'
+
+export { speedScore, routeScore, profileAt, timeProfile }
 
 export const toneClass = (v) => v <= 40 ? 'tone-red' : v <= 70 ? 'tone-amber' : 'tone-green'
 export const Num = ({ value, risk = false, className = '' }) => <span className={`${toneClass(risk ? 100 - value : value)} ${className}`}>{Math.round(value)}</span>
@@ -42,16 +45,6 @@ export const WhyNotCard = ({ analysis }) => analysis?.why_not?.length ? (
 ) : null
 export const IncidentSummary = ({ incidents = [] }) => (
   <div className="insight-card incident-summary"><div className="card-title"><span className="number-badge">!</span><div><span className="eyebrow">Live safety data</span><h3>Incident exposure</h3></div></div><div className="summary-value">{incidents.length}<small> reported incident{incidents.length === 1 ? '' : 's'}</small></div><div className="muted">{incidents.filter((i) => i.severity >= .75).length} high severity · Map intensity uses reported severity and confidence.</div></div>)
-const HOURS = [6, 9, 12, 15, 18, 21, 0, 3]
-export const speedScore = (r, minEta) => r?.eta_min ? Math.round(100 * Math.min(1, (minEta || r.eta_min) / r.eta_min)) : 0
-export const routeScore = (safety, speed, preference) => Math.round((preference / 100) * safety + (1 - preference / 100) * speed)
-export const profileAt = (route, h, preference = 50, minEta, label) => {
-  const f = route.factors || {}, lighting = f.lighting ?? 80, crowd = f.crowd ?? 80, traffic = f.traffic ?? 80, speed = speedScore(route, minEta)
-  const night = h >= 21 || h < 5 ? 1 : h >= 18 || h < 7 ? .5 : 0, rush = Math.floor(h) === 9 || Math.floor(h) === 18 ? 1 : 0
-  const safety = Math.max(0, Math.min(100, Math.round(route.safety - night * ((100 - lighting) * .6 + (100 - crowd) * .4 + 8) - rush * (100 - traffic) * .2)))
-  return { hour: h, label: label || `${String(h).padStart(2, '0')}:00`, safety, risk: 100 - safety, score: routeScore(safety, speed, preference) }
-}
-export const timeProfile = (route, preference = 50, minEta) => route ? HOURS.map((h) => profileAt(route, h, preference, minEta)) : []
 export const DepartCompare = ({ route, time, preference, minEta }) => {
   if (!time) return null
   if (!route) return <p className="muted depart-compare">Select a route to compare departure at {time}.</p>
@@ -68,6 +61,7 @@ export const TimeProfileTable = ({ route, preference, minEta }) => {
 export const SafetyProfile = ({ route, preference, minEta, livePoint }) => (
   <div className="panel time-aware-panel">
     <div className="panel-heading"><div><span className="eyebrow">01 · Safety intelligence</span><h2>Time-Aware Route Profile</h2></div><span className="info-dot">i</span></div>
+    <p className="muted">Estimated from lighting, crowd and traffic. The slider weights time-of-day safety and risk the same way route score blends safety with speed.</p>
     {livePoint && <div className="factor-callout pin-location-callout"><span>{livePoint.source === 'origin' ? 'Origin fallback' : 'Pinned location'} {livePoint.crime?.city || livePoint.crime?.district || ''}</span><strong><Num value={livePoint.safety} />/100</strong></div>}
     <div className="time-aware-stack">
       <div className="time-aware-table-wrap"><TimeProfileTable route={route} preference={preference} minEta={minEta} /></div>

@@ -1,9 +1,14 @@
-"""Route scoring: 22.5% historical crime lookup; five original live/hash factors share 77.5%."""
+"""Route scoring: 22.5% historical crime lookup; five original live/hash factors share 77.5%.
+
+Lighting, connectivity, and safe_locations prefer OSM Overpass when available.
+Recommended-route ranking uses OSM quality, historical-crime lookup, and shortest duration.
+"""
 import hashlib
 from datetime import datetime, timezone
 from typing import Optional
 
 from app.config import settings
+from app.services import osm_route_factors
 from app.services.crime_lookup import historical_crime_for
 from app.services.geo import haversine, path_length, point_at
 
@@ -22,6 +27,17 @@ WEIGHTS = {
 }
 FACTOR_KEYS = tuple(WEIGHTS)
 SAMPLE_EVERY_M = 1500.0
+_OSM_FACTORS = ("lighting", "connectivity", "safe_locations")
+
+# Recommended-route ranking among real ORS (or mock) candidates:
+#   osm_quality = (lighting + connectivity + safe_locations) / 3     # 0–100
+#   crime       = historical_crime factor (NCRB lookup safety_score) # 0–100
+#   shortest    = 100 * min(duration_s) / duration_s                 # 100 = fastest
+#   rank_score  = 0.45 * osm_quality + 0.25 * crime + 0.30 * shortest
+# crowd and traffic are not used for selection. Pin safety still uses WEIGHTS.
+OSM_RANK_WEIGHT = 0.45
+CRIME_RANK_WEIGHT = 0.25
+SHORTEST_RANK_WEIGHT = 0.30
 
 
 def _clamp(v: float) -> float:
@@ -83,6 +99,16 @@ def _weighted_mean(samples: list[dict], keys: list[str], weights: list[float]) -
     return out
 
 
+def _overlay_osm(geom, factors: dict) -> dict:
+    osm = osm_route_factors.try_osm_factors(geom)
+    if not osm:
+        return factors
+    for key in _OSM_FACTORS:
+        if key in osm:
+            factors[key] = osm[key]
+    return factors
+
+
 def base_factors(geom, hour: Optional[int] = None) -> dict:
     if not geom:
         f = factors_for_point(0.0, 0.0, hour)
@@ -100,7 +126,7 @@ def base_factors(geom, hour: Optional[int] = None) -> dict:
         hashed = {k: 72 + seed[n] % 21 for n, k in enumerate(FACTOR_KEYS)}
         out["connectivity"] = hashed["connectivity"]
         out["safe_locations"] = hashed["safe_locations"]
-    return out
+    return _overlay_osm(geom, out)
 
 
 def _incident_penalty(effects) -> float:
@@ -151,3 +177,45 @@ def score_point(lat: float, lng: float, incidents=None, hour: Optional[int] = No
         "latitude": lat,
         "longitude": lng,
     }
+
+
+def osm_quality(factors) -> float:
+    return (
+        float(factors.get("lighting", 0))
+        + float(factors.get("connectivity", 0))
+        + float(factors.get("safe_locations", 0))
+    ) / 3.0
+
+
+def shortest_index(duration_s, min_duration_s) -> float:
+    if duration_s <= 0 or min_duration_s <= 0:
+        return 0.0
+    return 100.0 * min_duration_s / duration_s
+
+
+def crime_quality(factors) -> float:
+    return float(factors.get("historical_crime", 0))
+
+
+def rank_score(factors, duration_s, min_duration_s) -> float:
+    return (
+        OSM_RANK_WEIGHT * osm_quality(factors)
+        + CRIME_RANK_WEIGHT * crime_quality(factors)
+        + SHORTEST_RANK_WEIGHT * shortest_index(duration_s, min_duration_s)
+    )
+
+
+def mark_recommended(routes) -> list:
+    """Set rank_score and recommended on ORS/mock candidates. Mutates and returns routes."""
+    if not routes:
+        return routes
+    min_dur = min((float(r.get("duration_s") or 0) for r in routes), default=0.0)
+    if min_dur <= 0:
+        min_dur = min((float(r.get("distance_m") or 1) for r in routes), default=1.0)
+    for r in routes:
+        duration = float(r.get("duration_s") or 0) or float(r.get("distance_m") or 1)
+        r["rank_score"] = round(rank_score(r.get("factors") or {}, duration, min_dur), 2)
+    best = max(routes, key=lambda r: (r["rank_score"], -float(r.get("duration_s") or 0)))
+    for r in routes:
+        r["recommended"] = r is best
+    return routes
