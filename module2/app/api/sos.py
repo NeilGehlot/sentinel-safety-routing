@@ -18,7 +18,7 @@ from app.config import (
 )
 from app.models.schemas import AssistantAskRequest, EmergencyCreateRequest, EmergencyResolveRequest, EmergencyResponse, GuardianSettingsRequest, SignalEventRequest, SosJourneyStartRequest
 from app.services import store
-from app.services.module1_client import ask_assistant
+from app.services.assistant import ask as ask_safety_assistant, provider_status
 from app.services.risk_engine import compute_risk, level_for_score, update_risk
 
 logger = logging.getLogger(__name__)
@@ -279,12 +279,20 @@ def start_journey(req: SosJourneyStartRequest):
 @router.post("/assistant/ask")
 def assistant_ask(req: AssistantAskRequest):
     journey = store.sos_journeys.get(req.journey_id) if req.journey_id else None
-    answer = ask_assistant(
-        question=req.question,
-        risk_score=journey.get("risk_score") if journey else None,
-        risk_level=journey.get("risk_level") if journey else None,
+    return ask_safety_assistant(
+        req.question,
+        {
+            "risk_score": journey.get("risk_score") if journey else None,
+            "risk_level": journey.get("risk_level") if journey else None,
+            "route_safety": None,
+            "nearby_safe_places": [],
+        },
     )
-    return {"answer": answer}
+
+
+@router.get("/assistant/status")
+def assistant_status():
+    return provider_status()
 
 
 @router.post("/journeys/{jid}/end")
