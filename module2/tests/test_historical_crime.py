@@ -2,13 +2,18 @@ from app.services.crime_lookup import NATIONAL_MEAN_SAFETY, historical_crime_for
 from app.services.route_scorer import WEIGHTS, live_factors, score, score_point
 
 
+SIX = ("historical_crime", "lighting", "crowd", "traffic", "connectivity", "safe_locations")
+
+
 def test_weights_sum_to_one():
+    assert tuple(WEIGHTS) == SIX
     assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
-    assert WEIGHTS["historical_crime"] == 0.20
-    live = WEIGHTS["lighting"] + WEIGHTS["crowd"] + WEIGHTS["traffic"]
-    assert abs(live - 0.80) < 1e-9
-    assert abs(WEIGHTS["lighting"] - WEIGHTS["crowd"]) < 1e-12
-    assert abs(WEIGHTS["crowd"] - WEIGHTS["traffic"]) < 1e-12
+    assert WEIGHTS["historical_crime"] == 0.225
+    others = sum(WEIGHTS[k] for k in SIX if k != "historical_crime")
+    assert abs(others - 0.775) < 1e-9
+    for k in SIX:
+        if k != "historical_crime":
+            assert WEIGHTS[k] > 0
 
 
 def test_unknown_point_uses_national_mean():
@@ -46,7 +51,7 @@ def test_route_score_keeps_incident_penalty():
     clean = score(geom, [])
     hit = score(geom, [{"impact": 0.5}])
     assert hit["safety"] < clean["safety"]
-    assert set(clean["factors"]) >= {"historical_crime", "lighting", "crowd", "traffic"}
+    assert set(clean["factors"]) == set(SIX)
 
 
 def test_point_safety_endpoint():
@@ -55,5 +60,5 @@ def test_point_safety_endpoint():
     res = TestClient(app).get("/api/routes/point-safety", params={"latitude": 26.9124, "longitude": 75.7873})
     assert res.status_code == 200
     body = res.json()
-    assert "historical_crime" in body["factors"]
+    assert set(body["factors"]) == set(SIX)
     assert 0 < body["crime"]["safety_score"] < 100

@@ -1,4 +1,4 @@
-"""Route and point scoring: 20% historical crime, 80% live lighting/crowd/traffic."""
+"""Route scoring: 22.5% historical crime lookup; five original live/hash factors share 77.5%."""
 import hashlib
 from datetime import datetime, timezone
 from typing import Optional
@@ -7,14 +7,20 @@ from app.config import settings
 from app.services.crime_lookup import historical_crime_for
 from app.services.geo import haversine, path_length, point_at
 
-LIVE_SHARE = 0.80
-LIVE_EACH = LIVE_SHARE / 3
-WEIGHTS = {
-    "historical_crime": 0.20,
-    "lighting": LIVE_EACH,
-    "crowd": LIVE_EACH,
-    "traffic": LIVE_EACH,
+# Original SOS_feature relative shares for the five non-crime keys, scaled to 0.775.
+_ORIG_LIVE = {
+    "lighting": 0.15,
+    "crowd": 0.10,
+    "traffic": 0.15,
+    "connectivity": 0.15,
+    "safe_locations": 0.20,
 }
+_LIVE_SCALE = 0.775 / sum(_ORIG_LIVE.values())
+WEIGHTS = {
+    "historical_crime": 0.225,
+    **{k: v * _LIVE_SCALE for k, v in _ORIG_LIVE.items()},
+}
+FACTOR_KEYS = tuple(WEIGHTS)
 SAMPLE_EVERY_M = 1500.0
 
 
@@ -32,10 +38,14 @@ def live_factors(lat: float, lng: float, hour: Optional[int] = None) -> dict:
     lighting = 78 + (h[0] % 17) - night * (12 + h[1] % 8)
     crowd = 70 + (h[2] % 19) - night * (8 + h[3] % 6) + (5 if 11 <= hour <= 16 else 0)
     traffic = 74 + (h[4] % 16) - rush * (10 + h[5] % 8)
+    seed = hashlib.md5(f"{round(lat, 3)}|{round(lng, 3)}".encode()).digest()
+    hashed = {k: 72 + seed[n] % 21 for n, k in enumerate(FACTOR_KEYS)}
     return {
         "lighting": round(_clamp(lighting), 1),
         "crowd": round(_clamp(crowd), 1),
         "traffic": round(_clamp(traffic), 1),
+        "connectivity": hashed["connectivity"],
+        "safe_locations": hashed["safe_locations"],
     }
 
 
@@ -84,8 +94,13 @@ def base_factors(geom, hour: Optional[int] = None) -> dict:
     for d in distances:
         lat, lng = point_at(geom, d) if len(geom) >= 2 else geom[0]
         samples.append(factors_for_point(lat, lng, hour))
-    keys = ["historical_crime", "lighting", "crowd", "traffic"]
-    return _weighted_mean(samples, keys, weights)
+    out = _weighted_mean(samples, list(FACTOR_KEYS), weights)
+    if len(geom) >= 2:
+        seed = hashlib.md5(str([[round(a, 3), round(b, 3)] for a, b in geom[::10]]).encode()).digest()
+        hashed = {k: 72 + seed[n] % 21 for n, k in enumerate(FACTOR_KEYS)}
+        out["connectivity"] = hashed["connectivity"]
+        out["safe_locations"] = hashed["safe_locations"]
+    return out
 
 
 def _incident_penalty(effects) -> float:
