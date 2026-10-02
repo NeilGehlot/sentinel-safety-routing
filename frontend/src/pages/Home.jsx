@@ -95,6 +95,8 @@ export default function Home() {
   const mediaRecorderRef = useRef(null)
   const lastVoiceEventRef = useRef(0)
   const countdownTriggeredRef = useRef(false)
+  const triggerRef = useRef(null)
+  const fallListenerRef = useRef(null)
   const run = async (fn) => { setErr(); try { return await fn() } catch (e) { setErr(e.message) } }
 
   useEffect(() => { api.recent().then(setIncidents).catch(() => {}) }, [])
@@ -388,7 +390,11 @@ export default function Home() {
     setSosNotice('Safety monitor active. Please allow microphone access.')
     setSosStatus({ risk_level: 'LOW', risk_score: 0, status: 'JOURNEY_ACTIVE', countdown_required: false, countdown_seconds: 0 })
     countdownTriggeredRef.current = false
+    await watchForFalls()
     await startVoiceMonitoring()
+    if (!window.isSecureContext) {
+      setSosNotice('Fall sensing is off on this http network address. Open the https network URL, or tap Fall.')
+    }
   }
 
   const refreshSafetyJourney = async () => {
@@ -404,6 +410,7 @@ export default function Home() {
     if (payload) {
       if (signal_type === 'SAFE') {
         stopVoiceMonitoring()
+        stopFallWatch()
         setSosJourney(null)
         setSosStatus(null)
         setCountdownOpen(false)
@@ -438,6 +445,8 @@ export default function Home() {
       }
     }
   }
+
+  triggerRef.current = triggerSafetyEvent
 
   const createEmergency = async (triggerType, journey = sosJourney) => {
     if (!journey || sosStatus?.status === 'EMERGENCY_ACTIVE') return
@@ -529,7 +538,46 @@ export default function Home() {
     return () => clearInterval(id)
   }, [sosJourney, validGuardianEmails.length, locationUpdateMinutes])
 
-  useEffect(() => () => stopVoiceMonitoring(), [])
+  const stopFallWatch = () => {
+    if (fallListenerRef.current) {
+      window.removeEventListener('devicemotion', fallListenerRef.current)
+      fallListenerRef.current = null
+    }
+  }
+
+  const watchForFalls = async () => {
+    stopFallWatch()
+    const Motion = window.DeviceMotionEvent
+    if (!Motion || !window.isSecureContext) return
+    if (typeof Motion.requestPermission === 'function') {
+      try {
+        const result = await Motion.requestPermission()
+        if (result !== 'granted') {
+          setSosNotice('Motion permission denied. Tap Fall to record a fall manually.')
+          return
+        }
+      } catch {
+        setSosNotice('Motion permission failed. Tap Fall to record a fall manually.')
+        return
+      }
+    }
+    let lastSent = 0
+    const onMotion = (event) => {
+      const reading = event.accelerationIncludingGravity
+      if (!reading || reading.x == null || reading.y == null || reading.z == null) return
+      const magnitude = Math.hypot(reading.x, reading.y, reading.z)
+      const spike = magnitude >= 25 || (magnitude >= 2.8 && magnitude <= 6)
+      if (!spike) return
+      const now = Date.now()
+      if (now - lastSent < 4000) return
+      lastSent = now
+      triggerRef.current?.('FALL_DETECTED')
+    }
+    fallListenerRef.current = onMotion
+    window.addEventListener('devicemotion', onMotion)
+  }
+
+  useEffect(() => () => { stopVoiceMonitoring(); stopFallWatch() }, [])
 
   const selectedRoute = routes.find((r) => r.id === sel)
   const activeRoute = st ? { id: st.route_id, geometry: st.geometry, safety: st.safety, factors: st.factors, distance_m: st.distance_m, progress_m: st.progress_m, eta_min: st.eta_min, incident_count: st.incidents_ahead.length } : selectedRoute
