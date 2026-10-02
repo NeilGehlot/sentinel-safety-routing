@@ -92,3 +92,48 @@ def test_manual_sos_emails_guardians_and_safe_resets(monkeypatch):
         assert store.emergencies[emergency.json()["emergency_id"]]["status"] == "RESOLVED"
     finally:
         store.guardian_settings = previous_settings
+
+
+def test_frontend_base_url_prefers_https_page_origin(monkeypatch):
+    from app.api import sos
+
+    monkeypatch.setattr(sos.settings, "frontend_base_url", "http://localhost:5173")
+    monkeypatch.setattr(sos, "_lan_ipv4", lambda: "192.168.1.20")
+    assert sos._frontend_base_url("https://demo.example.com/home") == "https://demo.example.com"
+    assert sos._frontend_base_url("https://localhost:5173") == "https://192.168.1.20:5173"
+
+
+def test_emergency_email_uses_https_public_origin(monkeypatch):
+    from app.api import sos
+
+    previous_settings = store.guardian_settings
+    store.guardian_settings = {
+        "guardian_emails": ["one@example.com", "two@example.com"],
+        "location_update_interval_minutes": 5,
+        "emergency_contacts": [],
+        "emergency_profile": {},
+    }
+    captured = []
+
+    def fake_send(emergency, email):
+        captured.append(emergency.get("public_origin"))
+        return {"success": True, "recipient": email}
+
+    monkeypatch.setattr(sos, "_send_alert_email", fake_send)
+    try:
+        started = c.post("/journeys/start", json={
+            "user_name": "Test User", "latitude": S[0], "longitude": S[1]
+        }).json()
+        emergency = c.post("/emergencies", json={
+            "journey_id": started["journey_id"],
+            "trigger_type": "MANUAL",
+            "latitude": S[0],
+            "longitude": S[1],
+            "public_origin": "https://sentinel.example.com",
+        })
+        assert emergency.status_code == 200
+        assert emergency.json()["dashboard_url"].startswith("https://sentinel.example.com/dashboard/")
+        assert captured == ["https://sentinel.example.com", "https://sentinel.example.com"]
+        assert store.emergencies[emergency.json()["emergency_id"]]["public_origin"] == "https://sentinel.example.com"
+    finally:
+        store.guardian_settings = previous_settings

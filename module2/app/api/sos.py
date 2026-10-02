@@ -8,7 +8,7 @@ from datetime import datetime
 from email.message import EmailMessage
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.config import (
     EMOTION_ANGRY_SCORE,
@@ -151,18 +151,37 @@ def _lan_ipv4():
     return ip
 
 
-def _frontend_base_url():
-    """Use the configured public URL. A localhost default becomes this machine's network address, same port."""
-    configured = (settings.frontend_base_url or "http://localhost:5173").rstrip("/")
-    parsed = urlparse(configured)
-    host = (parsed.hostname or "").lower()
-    if host not in {"localhost", "127.0.0.1", "::1"}:
+def _is_loopback_host(host: str | None) -> bool:
+    value = (host or "").lower().strip("[]")
+    return value in {"localhost", "127.0.0.1", "::1"}
+
+
+def _origin_from_url(url: str | None) -> str:
+    if not url or not str(url).strip():
+        return ""
+    parsed = urlparse(str(url).strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+
+def _frontend_base_url(preferred: str | None = None) -> str:
+    """Prefer the live page origin so guardian links match http/https."""
+    preferred_origin = _origin_from_url(preferred)
+    if preferred_origin and not _is_loopback_host(urlparse(preferred_origin).hostname):
+        return preferred_origin
+
+    configured = _origin_from_url(settings.frontend_base_url) or "http://localhost:5173"
+    configured_parts = urlparse(configured)
+    if not _is_loopback_host(configured_parts.hostname):
         return configured
+
     lan = _lan_ipv4()
     if not lan:
-        return configured
-    port = parsed.port or 5173
-    scheme = parsed.scheme or "http"
+        return preferred_origin or configured
+    scheme = urlparse(preferred_origin).scheme if preferred_origin else (configured_parts.scheme or "http")
+    port = urlparse(preferred_origin).port if preferred_origin else configured_parts.port
+    port = port or configured_parts.port or 5173
     return f"{scheme}://{lan}:{port}"
 
 
@@ -172,7 +191,7 @@ def _send_alert_email(emergency, recipient_email):
     user = settings.smtp_username
     password = settings.smtp_password
     from_addr = settings.smtp_from
-    base_url = _frontend_base_url()
+    base_url = emergency.get("public_origin") or _frontend_base_url()
 
     if not all([host, port, user, password, from_addr]):
         return {
@@ -442,7 +461,7 @@ def record_signal(req: SignalEventRequest):
 
 
 @router.post("/emergencies")
-def create_emergency(req: EmergencyCreateRequest):
+def create_emergency(req: EmergencyCreateRequest, request: Request):
     # TODO: single-user prototype assumption; without journey_id the first stored journey is used.
     journey = _journey(req.journey_id) if req.journey_id else next(iter(store.sos_journeys.values()), None)
     if journey is None:
@@ -463,6 +482,9 @@ def create_emergency(req: EmergencyCreateRequest):
         "risk_level": level_for_score(trigger_score),
         "trigger_reasons": ["Manual SOS"] if req.trigger_type == "MANUAL" else list(journey.get("trigger_reasons", [])),
         "events": [],
+        "public_origin": _frontend_base_url(
+            req.public_origin or request.headers.get("origin") or request.headers.get("referer")
+        ),
     }
     store.emergencies[eid] = emergency
     journey["emergency_id"] = eid
@@ -482,7 +504,7 @@ def create_emergency(req: EmergencyCreateRequest):
     journey["help_alerted"] = email_status in {"sent", "partial"}
     journey["email_status"] = email_status
     journey["guardian_count"] = len(guardian_emails)
-    dashboard_url = f"{_frontend_base_url()}/dashboard/{eid}"
+    dashboard_url = f"{emergency['public_origin']}/dashboard/{eid}"
     return {
         "emergency_id": eid,
         "dashboard_url": dashboard_url,
