@@ -584,15 +584,21 @@ export default function Home() {
       }
     }
     let lastSent = 0
+    let freefallAt = 0
     const onMotion = (event) => {
       const reading = event.accelerationIncludingGravity
       if (!reading || reading.x == null || reading.y == null || reading.z == null) return
       const magnitude = Math.hypot(reading.x, reading.y, reading.z)
-      const spike = magnitude >= 25 || (magnitude >= 2.8 && magnitude <= 6)
-      if (!spike) return
       const now = Date.now()
-      if (now - lastSent < 4000) return
+      // Browsers report either g (resting near 1) or m/s^2 (resting near 9.8).
+      const inG = magnitude < 8
+      const freefall = inG ? magnitude < 0.35 : magnitude < 3.5
+      const impact = inG ? magnitude >= 7 : magnitude >= 70
+      if (freefall) freefallAt = now
+      if (!impact || !freefallAt || now - freefallAt > 700) return
+      if (now - lastSent < 8000) return
       lastSent = now
+      freefallAt = 0
       triggerRef.current?.('FALL_DETECTED')
     }
     fallListenerRef.current = onMotion
