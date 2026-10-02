@@ -463,7 +463,13 @@ export default function Home() {
     if (!journey || sosStatus?.status === 'EMERGENCY_ACTIVE') return
     stopVoiceMonitoring()
     const recipients = validGuardianEmails.length ? validGuardianEmails.join(', ') : 'guardian contacts'
-    const payload = await run(() => api.createEmergency({ journey_id: journey.journey_id, trigger_type: triggerType, latitude: start.latitude, longitude: start.longitude }))
+    const payload = await run(() => api.createEmergency({
+      journey_id: journey.journey_id,
+      trigger_type: triggerType,
+      latitude: start.latitude,
+      longitude: start.longitude,
+      public_origin: window.location.origin,
+    }))
     if (payload) {
       setSosStatus({
         ...payload,
