@@ -8,7 +8,6 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
   server: {
     host: true,
-    https: true,
     proxy: {
       '/api': 'http://localhost:8000',
       '/journeys': 'http://localhost:8000',
