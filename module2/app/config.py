@@ -35,8 +35,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # sentinel/.env
 ENV_FILE = PROJECT_ROOT / ".env"
 
-# Load environment variables from the root .env
+# Root .env, then module2/.env for values that are only set there.
 load_dotenv(ENV_FILE)
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 # ============================================================
@@ -108,6 +109,7 @@ class Settings:
     llm_provider: str = os.getenv("LLM_PROVIDER", "").strip().lower()
     llm_model: str = os.getenv("LLM_MODEL", "").strip()
     llm_api_key: str = os.getenv("LLM_API_KEY", "").strip()
+    llm_base_url: str = os.getenv("LLM_BASE_URL", "").strip()
     grok_api_key: str = os.getenv("GROK_API_KEY", "").strip()
     groq_api_key: str = os.getenv("GROQ_API_KEY", "").strip()
     mock_mode: bool = _bool("MOCK_MODE", True)

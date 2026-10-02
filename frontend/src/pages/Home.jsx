@@ -381,7 +381,7 @@ export default function Home() {
   const startSafetyJourney = async () => {
     if (!ensureGuardiansConfigured()) return
 
-    const payload = await run(() => api.startSafetyMonitor({ user_name: 'Demo User', latitude: start.latitude, longitude: start.longitude }))
+    const payload = await run(() => api.startSafetyMonitor({ user_name: emergencyProfile.name || 'Traveler', latitude: start.latitude, longitude: start.longitude }))
     if (!payload) return
 
     setSosJourney(payload)
@@ -415,7 +415,18 @@ export default function Home() {
         return
       }
       if (payload?.status === 'EMERGENCY_ACTIVE') {
-        setSosStatus({ ...payload, status: 'EMERGENCY_ACTIVE', risk_score: 0, risk_level: 'LOW', countdown_required: false, countdown_seconds: 0 })
+        setSosStatus({
+          ...payload,
+          status: 'EMERGENCY_ACTIVE',
+          risk_score: 0,
+          risk_level: 'LOW',
+          countdown_required: false,
+          countdown_seconds: 0,
+          sos_trigger: payload.sos_trigger || 'AUTO',
+          email_status: payload.email_status,
+          help_alerted: payload.help_alerted,
+          guardian_count: payload.guardian_count,
+        })
         setCountdownOpen(false)
         setCountdownSeconds(0)
         countdownTriggeredRef.current = true
@@ -445,7 +456,18 @@ export default function Home() {
     const recipients = validGuardianEmails.length ? validGuardianEmails.join(', ') : 'guardian contacts'
     const payload = await run(() => api.createEmergency({ journey_id: journey.journey_id, trigger_type: triggerType, latitude: start.latitude, longitude: start.longitude }))
     if (payload) {
-      setSosStatus({ ...payload, status: 'EMERGENCY_ACTIVE', risk_score: 0, risk_level: 'LOW', countdown_required: false, countdown_seconds: 0 })
+      setSosStatus({
+        ...payload,
+        status: 'EMERGENCY_ACTIVE',
+        risk_score: 0,
+        risk_level: 'LOW',
+        countdown_required: false,
+        countdown_seconds: 0,
+        sos_trigger: payload.sos_trigger || triggerType,
+        email_status: payload.email_status,
+        help_alerted: payload.help_alerted,
+        guardian_count: payload.guardian_count,
+      })
       setSosNotice(`SOS ACTIVATED - help contacted and is on the way. Alerts sent to ${recipients}.`)
       setCountdownOpen(false)
       setCountdownSeconds(0)
@@ -677,7 +699,18 @@ export default function Home() {
         <div className="intel-column"><SafetyProfile route={pinScoredRoute} preference={preference} minEta={minEta} livePoint={livePoint} /><SafePointPanel route={activeRoute} points={safePoints} /><IndependencePanel routes={routes} incidents={incidents} /><IncidentSummary incidents={incidents} /></div>
       </section>
       <AnalysisPanel route={activeRoute} incidents={incidents} analysis={st?.reroute_analysis} />
-      <SafetyAssistantPanel sosJourney={sosJourney} />
+      <SafetyAssistantPanel
+        sosJourney={sosJourney}
+        sosStatus={sosStatus}
+        navJourneyId={jid}
+        selectedRoute={pinScoredRoute}
+        journeyStatus={st}
+        dest={dest}
+        start={start}
+        livePoint={livePoint}
+        safePoints={safePoints}
+        userName={emergencyProfile.name || sosJourney?.user_name}
+      />
     </main>
   </div></>)
 }
