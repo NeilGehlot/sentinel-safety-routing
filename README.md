@@ -10,15 +10,15 @@ These are the running app.
 
 ### Route planner
 
-![Safe route planner with the map, SOS monitor, and time-of-day profile](docs/screenshots/planner.png)
+![Safe route planner with the map, SOS monitor, and time-of-day profile](docs/planner.png)
 
 ### Compared routes
 
-![Three scored routes beside the map](docs/screenshots/routes.png)
+![Three scored routes beside the map](docs/routes.png)
 
 ### Guardian settings
 
-![Guardian emails, emergency contacts, and medical profile](docs/screenshots/settings.png)
+![Guardian emails, emergency contacts, and medical profile](docs/settings.png)
 
 ### Live guardian dashboard
 
