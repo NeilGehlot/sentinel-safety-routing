@@ -22,7 +22,7 @@ These are the running app.
 
 ### Live guardian dashboard
 
-![Emergency status, last known location, and trigger reason](docs/screenshots/guardian.png)
+![Emergency status, last known location, and trigger reason](docs/guardian.png)
 
 ## Features
 
