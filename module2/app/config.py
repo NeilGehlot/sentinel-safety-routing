@@ -35,8 +35,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # sentinel/.env
 ENV_FILE = PROJECT_ROOT / ".env"
 
-# Load environment variables from the root .env
+# Root .env, then module2/.env for values that are only set there.
 load_dotenv(ENV_FILE)
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 # ============================================================
@@ -93,10 +94,22 @@ class Settings:
     safety_countdown_seconds: int = _int("SAFETY_COUNTDOWN_SECONDS", 10)
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
 
+    # OSM / Overpass (lighting, connectivity, safe_locations along a route)
+    overpass_url: str = os.getenv(
+        "OVERPASS_URL", "https://overpass-api.de/api/interpreter"
+    ).strip()
+    overpass_timeout_seconds: float = _float("OVERPASS_TIMEOUT_SECONDS", 12.0)
+    overpass_query_timeout_seconds: int = _int("OVERPASS_QUERY_TIMEOUT_SECONDS", 10)
+    overpass_corridor_m: int = _int("OVERPASS_CORRIDOR_METERS", 150)
+    overpass_sample_spacing_m: float = _float("OVERPASS_SAMPLE_SPACING_M", 450)
+    overpass_max_samples: int = _int("OVERPASS_MAX_SAMPLES", 8)
+    http_user_agent: str = os.getenv("HTTP_USER_AGENT", "sentinel-safety-routing/0.1")
+
     # Safety assistant
     llm_provider: str = os.getenv("LLM_PROVIDER", "").strip().lower()
     llm_model: str = os.getenv("LLM_MODEL", "").strip()
     llm_api_key: str = os.getenv("LLM_API_KEY", "").strip()
+    llm_base_url: str = os.getenv("LLM_BASE_URL", "").strip()
     grok_api_key: str = os.getenv("GROK_API_KEY", "").strip()
     groq_api_key: str = os.getenv("GROQ_API_KEY", "").strip()
     mock_mode: bool = _bool("MOCK_MODE", True)

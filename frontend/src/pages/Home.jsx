@@ -364,10 +364,10 @@ export default function Home() {
   }, [pinPoint?.latitude, pinPoint?.longitude, pinSource])
   const stopRoute = async () => { if (jid) await api.stop(jid).catch(() => {}); if (watch.current !== undefined) { navigator.geolocation?.clearWatch(watch.current); watch.current = undefined } setJid(); setSt(); setGps(); setNote('Route stopped. Pick another route or destination.') }
   const minEta = routes.length ? Math.min(...routes.map((r) => r.eta_min)) : undefined
-  const pickByPreference = (list, pref) => list.reduce((best, r) => !best || routeScore(r.safety, speedScore(r, Math.min(...list.map((x) => x.eta_min))), pref) > routeScore(best.safety, speedScore(best, Math.min(...list.map((x) => x.eta_min))), pref) ? r : best, undefined)?.id
-  const changePreference = (value) => { const pref = Number(value); setPreference(pref); if (!jid && routes.length) setSel(pickByPreference(routes, pref)) }
+  const pickRecommended = (list) => list.find((r) => r.recommended)?.id ?? list[0]?.id
+  const changePreference = (value) => { setPreference(Number(value)) }
   const search = async () => { if (destinationMode) { await geocode(); return } setBusy(true); setNote(); const r = await run(() => api.search(start, dest)); setBusy(false)
-    if (r) { setRoutes(r.routes); setSel(pickByPreference(r.routes, preference)); if (!r.routes.length) setErr('No routes found.') } }
+    if (r) { setRoutes(r.routes); setSel(pickRecommended(r.routes)); if (!r.routes.length) setErr('No routes found.') } }
   const begin = async () => { const r = await run(() => api.start(sel)); if (r) { setJid(r.journey_id); refresh(r.journey_id)
     if (navigator.geolocation) watch.current = navigator.geolocation.watchPosition((p) => setGps({ latitude: p.coords.latitude, longitude: p.coords.longitude }), () => setNote('Live location is unavailable; using simulated navigation.'))
     else setNote('Live location is unavailable; using simulated navigation.') } }
@@ -383,7 +383,7 @@ export default function Home() {
   const startSafetyJourney = async () => {
     if (!ensureGuardiansConfigured()) return
 
-    const payload = await run(() => api.startSafetyMonitor({ user_name: 'Demo User', latitude: start.latitude, longitude: start.longitude }))
+    const payload = await run(() => api.startSafetyMonitor({ user_name: emergencyProfile.name || 'Traveler', latitude: start.latitude, longitude: start.longitude }))
     if (!payload) return
 
     setSosJourney(payload)
@@ -422,7 +422,18 @@ export default function Home() {
         return
       }
       if (payload?.status === 'EMERGENCY_ACTIVE') {
-        setSosStatus({ ...payload, status: 'EMERGENCY_ACTIVE', risk_score: 0, risk_level: 'LOW', countdown_required: false, countdown_seconds: 0 })
+        setSosStatus({
+          ...payload,
+          status: 'EMERGENCY_ACTIVE',
+          risk_score: 0,
+          risk_level: 'LOW',
+          countdown_required: false,
+          countdown_seconds: 0,
+          sos_trigger: payload.sos_trigger || 'AUTO',
+          email_status: payload.email_status,
+          help_alerted: payload.help_alerted,
+          guardian_count: payload.guardian_count,
+        })
         setCountdownOpen(false)
         setCountdownSeconds(0)
         countdownTriggeredRef.current = true
@@ -454,7 +465,18 @@ export default function Home() {
     const recipients = validGuardianEmails.length ? validGuardianEmails.join(', ') : 'guardian contacts'
     const payload = await run(() => api.createEmergency({ journey_id: journey.journey_id, trigger_type: triggerType, latitude: start.latitude, longitude: start.longitude }))
     if (payload) {
-      setSosStatus({ ...payload, status: 'EMERGENCY_ACTIVE', risk_score: 0, risk_level: 'LOW', countdown_required: false, countdown_seconds: 0 })
+      setSosStatus({
+        ...payload,
+        status: 'EMERGENCY_ACTIVE',
+        risk_score: 0,
+        risk_level: 'LOW',
+        countdown_required: false,
+        countdown_seconds: 0,
+        sos_trigger: payload.sos_trigger || triggerType,
+        email_status: payload.email_status,
+        help_alerted: payload.help_alerted,
+        guardian_count: payload.guardian_count,
+      })
       setSosNotice(`SOS ACTIVATED - help contacted and is on the way. Alerts sent to ${recipients}.`)
       setCountdownOpen(false)
       setCountdownSeconds(0)
@@ -583,7 +605,7 @@ export default function Home() {
   const activeRoute = st ? { id: st.route_id, geometry: st.geometry, safety: st.safety, factors: st.factors, distance_m: st.distance_m, progress_m: st.progress_m, eta_min: st.eta_min, incident_count: st.incidents_ahead.length } : selectedRoute
   const pinScoredRoute = livePoint ? { ...(activeRoute || {}), safety: livePoint.safety, factors: livePoint.factors, eta_min: activeRoute?.eta_min ?? 1 } : activeRoute
   const navItems = [{ icon: '⌂', label: 'Home' }, { icon: '⚙', label: 'Settings' }]
-  const scoredRoutes = routes.map((r) => ({ ...r, high_risk_min: highRiskExposure(r, incidents).minutes, route_score: routeScore(r.safety, speedScore(r, minEta), preference), recommended: r.id === pickByPreference(routes, preference) }))
+  const scoredRoutes = routes.map((r) => ({ ...r, high_risk_min: highRiskExposure(r, incidents).minutes, route_score: routeScore(r.safety, speedScore(r, minEta), preference) }))
   const safePoints = safePointsFor(activeRoute, isEmergencyActive ? start : null)
   const departAt = departMode === 'Custom' ? departTime : undefined
   const shown = st ? [{ id: st.route_id, geometry: st.geometry }] : routes
@@ -725,7 +747,18 @@ export default function Home() {
         <div className="intel-column"><SafetyProfile route={pinScoredRoute} preference={preference} minEta={minEta} livePoint={livePoint} /><SafePointPanel route={activeRoute} points={safePoints} /><IndependencePanel routes={routes} incidents={incidents} /><IncidentSummary incidents={incidents} /></div>
       </section>
       <AnalysisPanel route={activeRoute} incidents={incidents} analysis={st?.reroute_analysis} />
-      <SafetyAssistantPanel sosJourney={sosJourney} />
+      <SafetyAssistantPanel
+        sosJourney={sosJourney}
+        sosStatus={sosStatus}
+        navJourneyId={jid}
+        selectedRoute={pinScoredRoute}
+        journeyStatus={st}
+        dest={dest}
+        start={start}
+        livePoint={livePoint}
+        safePoints={safePoints}
+        userName={emergencyProfile.name || sosJourney?.user_name}
+      />
     </main>
   </div></>)
 }

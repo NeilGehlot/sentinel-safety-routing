@@ -15,9 +15,9 @@ def search(req: SearchRequest):
         sc = route_scorer.score(r["geometry"], eff)
         r.update(safety=min(100, sc["safety"] + r.get("safety_bonus", 0)), factors=sc["factors"], incident_count=sc["incident_count"], eta_min=round(r["duration_s"]/60, 1))
         store.routes[r["id"]] = r
-    best = max(found, key=lambda x: x["safety"])
+    route_scorer.mark_recommended(found)
     for r in found:
-        r["recommended"] = r is best
+        store.routes[r["id"]] = r
     return {"routes": found}
 
 @router.get("/geocode")
