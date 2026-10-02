@@ -72,6 +72,7 @@ class EmergencyCreateRequest(BaseModel):
     longitude: Optional[float] = None
     accuracy: Optional[float] = None
     user_name: Optional[str] = "User"
+    public_origin: Optional[str] = None
 
 class EmergencyResolveRequest(BaseModel):
     reason: str = "SAFE"
