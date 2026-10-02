@@ -2,9 +2,11 @@ import base64
 import io
 import logging
 import smtplib
+import socket
 import uuid
 from datetime import datetime
 from email.message import EmailMessage
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
 
@@ -134,13 +136,43 @@ def _guardian_emails():
     return [email.strip() for email in store.guardian_settings.get("guardian_emails", []) if email and email.strip()]
 
 
+def _lan_ipv4():
+    """Address of this machine on the network used for outbound traffic."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+    except OSError:
+        return ""
+    finally:
+        sock.close()
+    if not ip or ip.startswith("127."):
+        return ""
+    return ip
+
+
+def _frontend_base_url():
+    """Use the configured public URL. A localhost default becomes this machine's network address, same port."""
+    configured = (settings.frontend_base_url or "http://localhost:5173").rstrip("/")
+    parsed = urlparse(configured)
+    host = (parsed.hostname or "").lower()
+    if host not in {"localhost", "127.0.0.1", "::1"}:
+        return configured
+    lan = _lan_ipv4()
+    if not lan:
+        return configured
+    port = parsed.port or 5173
+    scheme = parsed.scheme or "http"
+    return f"{scheme}://{lan}:{port}"
+
+
 def _send_alert_email(emergency, recipient_email):
     host = settings.smtp_host
     port = settings.smtp_port
     user = settings.smtp_username
     password = settings.smtp_password
     from_addr = settings.smtp_from
-    base_url = settings.frontend_base_url
+    base_url = _frontend_base_url()
 
     if not all([host, port, user, password, from_addr]):
         return {
@@ -450,8 +482,10 @@ def create_emergency(req: EmergencyCreateRequest):
     journey["help_alerted"] = email_status in {"sent", "partial"}
     journey["email_status"] = email_status
     journey["guardian_count"] = len(guardian_emails)
+    dashboard_url = f"{_frontend_base_url()}/dashboard/{eid}"
     return {
         "emergency_id": eid,
+        "dashboard_url": dashboard_url,
         "status": "EMERGENCY_ACTIVE",
         "risk_score": 0,
         "risk_level": "LOW",

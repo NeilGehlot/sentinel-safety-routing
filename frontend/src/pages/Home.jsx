@@ -477,7 +477,7 @@ export default function Home() {
         help_alerted: payload.help_alerted,
         guardian_count: payload.guardian_count,
       })
-      setSosNotice(`SOS ACTIVATED - help contacted and is on the way. Alerts sent to ${recipients}.`)
+      setSosNotice(payload.dashboard_url ? `SOS ACTIVATED. Guardian dashboard: ${payload.dashboard_url}` : `SOS ACTIVATED - help contacted and is on the way. Alerts sent to ${recipients}.`)
       setCountdownOpen(false)
       setCountdownSeconds(0)
       countdownTriggeredRef.current = true
