@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from app.models.schemas import SearchRequest, RecalcRequest
-from app.services import navigation_service as nav, route_matcher, route_scorer, store
+from app.services import navigation_service as nav, osm_route_factors, route_matcher, route_scorer, store
 
 router = APIRouter(prefix="/api/routes", tags=["routes"])
 
@@ -13,7 +13,7 @@ def search(req: SearchRequest):
     for r in found:
         eff = route_matcher.match(r["geometry"], store.incidents, 0, r["distance_m"]/r["duration_s"])
         sc = route_scorer.score(r["geometry"], eff)
-        r.update(safety=min(100, sc["safety"] + r.get("safety_bonus", 0)), factors=sc["factors"], incident_count=sc["incident_count"], eta_min=round(r["duration_s"]/60, 1))
+        r.update(safety=min(100, sc["safety"] + r.get("safety_bonus", 0)), factors=sc["factors"], incident_count=sc["incident_count"], eta_min=round(r["duration_s"]/60, 1), safe_points=osm_route_factors.safe_places_for(r["geometry"]))
         store.routes[r["id"]] = r
     route_scorer.mark_recommended(found)
     for r in found:
@@ -40,6 +40,15 @@ def point_safety(
 ):
     """Live pin/GPS score: lighting/crowd/traffic at this point; crime only if district/city changes."""
     return route_scorer.score_point(latitude, longitude, store.incidents)
+
+
+@router.get("/safe-points")
+def safe_points(
+    latitude: float = Query(...),
+    longitude: float = Query(...),
+):
+    """Named OSM refuges around one position. Empty list if Overpass is unavailable."""
+    return {"points": osm_route_factors.safe_places_for([[latitude, longitude]])}
 
 @router.post("/recalculate")
 def recalc(req: RecalcRequest):

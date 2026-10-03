@@ -32,7 +32,9 @@ _SAFE_AMENITIES = {
 
 _OSM_KEYS = ("lighting", "connectivity", "safe_locations")
 _CACHE: dict[tuple, dict[str, int]] = {}
+_PLACE_CACHE: dict[tuple, list] = {}
 _CACHE_MAX = 48
+_PLACE_LIMIT = 8
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> int:
@@ -172,6 +174,48 @@ def _min_distance_m(geom, points) -> float | None:
     return best
 
 
+def _place_kind(tags: dict) -> str:
+    amenity = tags.get("amenity")
+    if amenity in _SAFE_AMENITIES:
+        return amenity
+    if tags.get("station") == "subway" or tags.get("railway") == "subway_entrance" or tags.get("subway") == "yes":
+        return "transit"
+    return "public"
+
+
+def places_from_elements(elements: list, geom, limit: int = _PLACE_LIMIT) -> list[dict]:
+    """Named OSM refuges near the geometry, nearest first."""
+    found = []
+    seen: set[tuple] = set()
+    for element in elements:
+        if not isinstance(element, dict):
+            continue
+        tags = element.get("tags")
+        if not isinstance(tags, dict) or not _is_safe_place(tags):
+            continue
+        coords = _coords(element)
+        if coords is None:
+            continue
+        kind = _place_kind(tags)
+        key = (round(coords[0], 4), round(coords[1], 4), kind)
+        if key in seen:
+            continue
+        seen.add(key)
+        name = tags.get("name")
+        if not isinstance(name, str) or not name.strip():
+            name = kind.replace("_", " ").title()
+        distance = _min_distance_m(geom, [coords]) if geom else None
+        found.append({
+            "name": name.strip(),
+            "kind": kind,
+            "latitude": coords[0],
+            "longitude": coords[1],
+            "distance_m": round(distance) if distance is not None else None,
+        })
+    found.sort(key=lambda place: place["distance_m"] if place["distance_m"] is not None else 1e12)
+    return found[:limit]
+
+
 def factors_from_elements(elements: list, geom) -> dict[str, int]:
     """Map Overpass elements to lighting / connectivity / safe_locations scores."""
     length_km = max(path_length(geom) / 1000.0, 0.2)
@@ -245,15 +289,34 @@ def try_osm_factors(geom) -> dict[str, int] | None:
         return cached
     try:
         payload = fetch_overpass_payload(build_query(samples))
-        factors = factors_from_elements(payload.get("elements") or [], geom)
+        elements = payload.get("elements") or []
+        factors = factors_from_elements(elements, geom)
+        places = places_from_elements(elements, geom)
     except Exception as exc:
         log.warning("OSM route factors unavailable (%s); using geometry hash fallback", type(exc).__name__)
         return None
     if len(_CACHE) >= _CACHE_MAX:
-        _CACHE.pop(next(iter(_CACHE)))
+        oldest = next(iter(_CACHE))
+        _CACHE.pop(oldest, None)
+        _PLACE_CACHE.pop(oldest, None)
     _CACHE[key] = factors
+    _PLACE_CACHE[key] = places
     return factors
+
+
+def safe_places_for(geom) -> list[dict]:
+    """Real OSM refuges along a route, or around a single point. Empty if Overpass fails."""
+    samples = sample_points(geom)
+    if len(samples) < 1:
+        return []
+    key = _cache_key(samples)
+    cached = _PLACE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try_osm_factors(geom)
+    return list(_PLACE_CACHE.get(key) or [])
 
 
 def clear_cache() -> None:
     _CACHE.clear()
+    _PLACE_CACHE.clear()

@@ -11,6 +11,7 @@ export const api = {
   stop: (id) => post(`/api/navigation/${id}/stop`),
   geocode: (q) => fetch(`/api/routes/geocode?q=${encodeURIComponent(q)}`).then(j),
   pointSafety: (latitude, longitude) => fetch(`/api/routes/point-safety?latitude=${latitude}&longitude=${longitude}`).then(j),
+  safePoints: (latitude, longitude) => fetch(`/api/routes/safe-points?latitude=${latitude}&longitude=${longitude}`).then(j),
   getGuardianSettings: () => fetch('/settings/guardians').then(j),
   saveGuardianSettings: (body) => post('/settings/guardians', body),
   startSafetyMonitor: (body) => post('/journeys/start', body),
