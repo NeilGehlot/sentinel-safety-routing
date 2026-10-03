@@ -47,6 +47,7 @@ def status(jid):
             "distance_m": round(r["distance_m"]), "progress_m": round(j["progress"]),
             "eta_min": round(ev["remaining_min"], 1),
             "safety": ev["current_safety"], "factors": ev["factors"], "geometry": r["geometry"],
+            "safe_points": r.get("safe_points") or [],
             "status": "completed" if done else ("reroute_recommended" if rec else ("incident_ahead" if ahead else "on_track")),
             "incidents_ahead": ahead, "next_checkpoint": {"latitude": nxt[0], "longitude": nxt[1]},
             "reroute_analysis": analysis,

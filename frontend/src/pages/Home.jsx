@@ -8,16 +8,6 @@ import { api, PLACES, POLL_MS } from '../services/api.js'
 import KEYWORDS from '../data/distress-keywords.json'
 
 const DEFAULT_START = { latitude: 26.9196, longitude: 75.7878 }
-const SAFE_KINDS = [['Police station', 'police'], ['Hospital', 'hospital'], ['24x7 pharmacy', 'pharmacy'], ['Metro station', 'transit'], ['Fuel station', 'fuel']]
-const safePointsFor = (route, center) => {
-  const g = route?.geometry || []
-  if (g.length < 2 && !center) return []
-  if (g.length < 2) return SAFE_KINDS.map(([name, kind], n) => {
-    const angle = n * Math.PI * 2 / SAFE_KINDS.length
-    return { name: `${name} ${n + 1}`, kind, latitude: center.latitude + Math.sin(angle) * .004, longitude: center.longitude + Math.cos(angle) * .004 }
-  })
-  return SAFE_KINDS.map(([name, kind], n) => { const p = g[Math.floor((g.length - 1) * (n + 1) / (SAFE_KINDS.length + 1))]; const o = (n % 2 ? 1 : -1) * .0012; return { name: `${name} ${n + 1}`, kind, latitude: p[0] + o, longitude: p[1] - o } })
-}
 
 const bestRouteId = (list, preferenceValue) => {
   const usable = (list || []).filter((route) => route?.eta_min > 0)
@@ -76,6 +66,7 @@ export default function Home() {
   const [preference, setPreference] = useState(50)
   const [destinationMode, setDestinationMode] = useState(false), [destinationQuery, setDestinationQuery] = useState('')
   const [gps, setGps] = useState(), watch = useRef()
+  const [nearbySafePoints, setNearbySafePoints] = useState([])
   const [sosJourney, setSosJourney] = useState(null), [sosStatus, setSosStatus] = useState(null), [sosNotice, setSosNotice] = useState('')
   const [isListening, setIsListening] = useState(false), [manualTranscript, setManualTranscript] = useState('help me')
   const [liveTranscript, setLiveTranscript] = useState('')
@@ -523,6 +514,15 @@ export default function Home() {
   const escalateToEmergency = () => createEmergency('AUTO')
 
   const isEmergencyActive = Boolean(sosJourney && sosStatus?.status === 'EMERGENCY_ACTIVE')
+  useEffect(() => {
+    if (!isEmergencyActive) { setNearbySafePoints([]); return }
+    const here = gps || start
+    let cancelled = false
+    api.safePoints(here.latitude, here.longitude).then((body) => {
+      if (!cancelled) setNearbySafePoints(body.points || [])
+    }).catch(() => { if (!cancelled) setNearbySafePoints([]) })
+    return () => { cancelled = true }
+  }, [isEmergencyActive, gps, start])
   const hideActionButtons = isEmergencyActive
   const riskDisplayValue = Number(sosStatus?.risk_score ?? 0)
 
@@ -634,7 +634,7 @@ export default function Home() {
   const navItems = [{ icon: '⌂', label: 'Home' }, { icon: '⚙', label: 'Settings' }]
   const chosenId = bestRouteId(routes, preference)
   const scoredRoutes = routes.map((r) => ({ ...r, high_risk_min: highRiskExposure(r, incidents).minutes, route_score: routeScore(r.safety, speedScore(r, minEta), preference), recommended: r.id === chosenId })).sort((a, b) => b.route_score - a.route_score || a.eta_min - b.eta_min)
-  const safePoints = safePointsFor(activeRoute, isEmergencyActive ? start : null)
+  const safePoints = (activeRoute?.safe_points?.length ? activeRoute.safe_points : nearbySafePoints)
   const departAt = departMode === 'Custom' ? departTime : undefined
   const shown = st ? [{ id: st.route_id, geometry: st.geometry }] : routes
 

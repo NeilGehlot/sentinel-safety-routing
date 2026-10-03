@@ -47,6 +47,22 @@ def test_factors_from_elements_higher_with_osm_features():
         assert 40 <= value <= 96, key
 
 
+def test_places_from_elements_keeps_named_refuges():
+    places = osm_route_factors.places_from_elements(RICH, GEOM)
+    assert places[0]["name"] == "City Police"
+    assert places[0]["kind"] == "police"
+    assert places[1]["name"] == "Hospital"
+    assert places[1]["kind"] == "hospital"
+    assert all("latitude" in place and "longitude" in place for place in places)
+
+
+def test_safe_places_for_uses_same_payload(monkeypatch):
+    monkeypatch.setattr(osm_route_factors, "fetch_overpass_payload", lambda query: {"elements": RICH})
+    osm_route_factors.clear_cache()
+    places = osm_route_factors.safe_places_for(GEOM)
+    assert [place["kind"] for place in places] == ["police", "hospital"]
+
+
 def test_lit_no_lowers_lighting():
     yes = osm_route_factors.factors_from_elements(
         [_el("w", 1, 26.92, 75.79, {"highway": "residential", "lit": "yes"}, "way")], GEOM
