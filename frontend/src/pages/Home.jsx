@@ -7,7 +7,8 @@ import { TimeProfileTable, DepartCompare, highRiskExposure, speedScore, routeSco
 import { api, PLACES, POLL_MS } from '../services/api.js'
 import KEYWORDS from '../data/distress-keywords.json'
 
-const DEFAULT_START = { latitude: 26.9196, longitude: 75.7878 }
+const DEFAULT_START = { name: 'Jaipur center (demo)', latitude: 26.9196, longitude: 75.7878 }
+const parseCoords = (q = '') => { const m = String(q).trim().match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/); if (!m) return null; const latitude = Number(m[1]), longitude = Number(m[2]); if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null; return { name: `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`, latitude, longitude } }
 
 const bestRouteId = (list, preferenceValue) => {
   const usable = (list || []).filter((route) => route?.eta_min > 0)
@@ -73,6 +74,7 @@ export default function Home() {
   const [activeNav, setActiveNav] = useState('Home')
   const [departMode, setDepartMode] = useState('Now'), [departTime, setDepartTime] = useState('21:30'), [navCollapsed, setNavCollapsed] = useState(false)
   const [mapMode, setMapMode] = useState('safety'), [geoResults, setGeoResults] = useState([]), [geoBusy, setGeoBusy] = useState(false)
+  const [originMode, setOriginMode] = useState(false), [originQuery, setOriginQuery] = useState(''), [originResults, setOriginResults] = useState([]), [originBusy, setOriginBusy] = useState(false)
   const [livePoint, setLivePoint] = useState()
   const liveCrimeKey = useRef()
   const [currentPage, setCurrentPage] = useState('home')
@@ -335,18 +337,28 @@ export default function Home() {
     try { recognition.start() } catch { setIsListening(false) }
   }
 
-  const locate = () => navigator.geolocation
-    ? navigator.geolocation.getCurrentPosition((p) => setStart({ latitude: p.coords.latitude, longitude: p.coords.longitude }),
-        (e) => setErr(e.code === 1 ? 'Location permission denied. Using Jaipur Junction as the start.' : 'Could not read your location.'))
-    : setErr('Geolocation is not supported in this browser.')
-  const swapLocations = () => { const nextStart = dest; setDest(start); setStart(nextStart); setDestinationMode(false); setDestinationQuery('') }
+  const startLabel = start.name || `${start.latitude.toFixed(4)}, ${start.longitude.toFixed(4)}`
+  const pickOrigin = (place) => { setStart(place); setOriginMode(false); setOriginQuery(''); setOriginResults([]); setRoutes([]); setSel() }
+  const locate = () => {
+    if (!navigator.geolocation) { setNote('Geolocation is unavailable. Pick a start place or type coordinates.'); return }
+    navigator.geolocation.getCurrentPosition(
+      (p) => pickOrigin({ name: 'My location', latitude: p.coords.latitude, longitude: p.coords.longitude }),
+      () => setNote('Live location denied or unavailable. Choose a start place; routing does not need GPS.'),
+    )
+  }
+  const chooseOrigin = (value) => { if (value === '__search__') { setOriginMode(true); setOriginQuery(''); return } if (value === '__gps__') { locate(); return } const next = PLACES.find((p) => p.name === value); if (next) pickOrigin(next) }
+  const typeOrigin = (value) => { setOriginQuery(value); const coords = parseCoords(value); if (coords) { pickOrigin(coords); return } const next = PLACES.find((p) => p.name.toLowerCase() === value.trim().toLowerCase()); if (next) pickOrigin(next) }
+  const geocodeOrigin = async () => { const q = originQuery.trim(); if (!q) return; const coords = parseCoords(q); if (coords) { pickOrigin(coords); return } setOriginBusy(true); setErr()
+    const local = PLACES.filter((p) => p.name.toLowerCase().includes(q.toLowerCase())), found = await api.geocode(q).catch(() => [])
+    setOriginBusy(false); const all = [...local, ...found]; setOriginResults(all); if (!all.length) setErr('No start places found. Try another name, lat,lng, or use my location.') }
+  const swapLocations = () => { const nextStart = dest; setDest({ ...start, name: startLabel }); setStart({ ...nextStart }); setOriginMode(false); setOriginQuery(''); setOriginResults([]); setDestinationMode(false); setDestinationQuery('') }
   const chooseDestination = (value) => { if (value === '__search__') { setDestinationMode(true); setDestinationQuery(''); return } const next = PLACES.find((p) => p.name === value); if (next) { setDest(next); setDestinationMode(false); setDestinationQuery('') } }
   const typeDestination = (value) => { setDestinationQuery(value); const next = PLACES.find((p) => p.name.toLowerCase() === value.trim().toLowerCase()); if (next) { setDest(next); setDestinationMode(false); setDestinationQuery('') } }
   const pickDestination = (place) => { setDest(place); setDestinationMode(false); setDestinationQuery(''); setGeoResults([]); setRoutes([]); setSel() }
-  const geocode = async () => { const q = destinationQuery.trim(); if (!q) return; setGeoBusy(true); setErr()
+  const geocode = async () => { const q = destinationQuery.trim(); if (!q) return; const coords = parseCoords(q); if (coords) { pickDestination(coords); return } setGeoBusy(true); setErr()
     const local = PLACES.filter((p) => p.name.toLowerCase().includes(q.toLowerCase())), found = await api.geocode(q).catch(() => [])
     setGeoBusy(false); const all = [...local, ...found]; setGeoResults(all); if (!all.length) setErr('No places found. Try another name or click the map to set the destination.') }
-  const mapClick = (p) => { if (jid) return; pickDestination({ name: `Pinned ${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}`, ...p }) }
+  const mapClick = (p) => { if (jid) return; const place = { name: `Pinned ${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}`, ...p }; if (originMode) pickOrigin(place); else pickDestination(place) }
   const pinPoint = dest?.latitude != null ? dest : (gps || start)
   const pinSource = dest?.latitude != null ? 'pin' : (gps ? 'gps' : 'origin')
   useEffect(() => {
@@ -372,7 +384,7 @@ export default function Home() {
     setPreference(next)
     if (routes.length) setSel(bestRouteId(routes, next))
   }
-  const search = async () => { if (destinationMode) { await geocode(); return } setBusy(true); setNote(); const r = await run(() => api.search(start, dest)); setBusy(false)
+  const search = async () => { if (originMode) { await geocodeOrigin(); return } if (destinationMode) { await geocode(); return } setBusy(true); setNote(); const r = await run(() => api.search(start, dest)); setBusy(false)
     if (r) { setRoutes(r.routes); setSel(bestRouteId(r.routes, preference)); if (!r.routes.length) setErr('No routes found.') } }
   const begin = async () => { const r = await run(() => api.start(sel)); if (r) { setJid(r.journey_id); refresh(r.journey_id)
     // FREEZE_SIM_WALK: pin stays at last real GPS or start; do not follow simulated st.position.
@@ -790,7 +802,7 @@ export default function Home() {
       </div>}
 
       <section className="search-panel">
-        <div className="search-fields"><label><span>From</span><div className="field"><span className="field-icon blue">⌖</span><input readOnly value={`${start.latitude.toFixed(4)}, ${start.longitude.toFixed(4)}`} /><button className="locate-button" onClick={locate} title="Use my location">◎</button></div></label><button className="swap-button" onClick={swapLocations} title="Swap locations">⇄</button><label><span>To</span>{destinationMode ? <div className="field destination-search"><span className="field-icon red">●</span><input autoFocus value={destinationQuery} onChange={(e) => typeDestination(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && geocode()} placeholder="Search any place..." /><button className="locate-button" onClick={geocode} title="Search">{geoBusy ? '…' : '⌕'}</button></div> : <div className="field"><span className="field-icon red">●</span><select value={dest.name} onChange={(e) => chooseDestination(e.target.value)}><option value="__search__">Search any place...</option>{!PLACES.some((p) => p.name === dest.name) && <option>{dest.name}</option>}{PLACES.map((p) => <option key={p.name}>{p.name}</option>)}</select></div>}{destinationMode && geoResults.length > 0 && <div className="geo-results">{geoResults.map((p) => <button key={p.name + p.latitude} type="button" onClick={() => pickDestination(p)}>{p.name}</button>)}</div>}{destinationMode && <small className="muted destination-note">Press Enter to search, or click the map to drop a destination pin.</small>}</label><label className="departure"><span>Depart at</span><div className="field"><span className="field-icon">◷</span><select value={departMode} onChange={(e) => setDepartMode(e.target.value)}><option>Now</option><option value="Custom">Custom time</option></select>{departMode === 'Custom' && <input type="time" className="depart-time" value={departTime} onChange={(e) => setDepartTime(e.target.value)} />}</div></label><button className="find-button" onClick={search} disabled={busy || Boolean(jid)}>{busy ? 'Finding…' : jid ? 'Route active' : destinationMode ? 'Search place' : 'Find Safe Routes'} <span>→</span></button></div>
+        <div className="search-fields"><label><span>From</span>{originMode ? <div className="field destination-search"><span className="field-icon blue">⌖</span><input autoFocus value={originQuery} onChange={(e) => typeOrigin(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && geocodeOrigin()} placeholder="Search start or lat,lng..." /><button className="locate-button" onClick={geocodeOrigin} title="Search">{originBusy ? '…' : '⌕'}</button><button className="locate-button" onClick={locate} title="Use my location">◎</button></div> : <div className="field"><span className="field-icon blue">⌖</span><select value={startLabel} onChange={(e) => chooseOrigin(e.target.value)}><option value="__search__">Search any place...</option><option value="__gps__">Use my location</option>{!PLACES.some((p) => p.name === startLabel) && startLabel && <option>{startLabel}</option>}{PLACES.map((p) => <option key={p.name}>{p.name}</option>)}</select><button className="locate-button" onClick={locate} title="Use my location">◎</button></div>}{originMode && originResults.length > 0 && <div className="geo-results">{originResults.map((p) => <button key={'o' + p.name + p.latitude} type="button" onClick={() => pickOrigin(p)}>{p.name}</button>)}</div>}{originMode && <small className="muted destination-note">Press Enter to search a start, type lat,lng, or use my location. GPS is optional.</small>}</label><button className="swap-button" onClick={swapLocations} title="Swap locations">⇄</button><label><span>To</span>{destinationMode ? <div className="field destination-search"><span className="field-icon red">●</span><input autoFocus value={destinationQuery} onChange={(e) => typeDestination(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && geocode()} placeholder="Search any place..." /><button className="locate-button" onClick={geocode} title="Search">{geoBusy ? '…' : '⌕'}</button></div> : <div className="field"><span className="field-icon red">●</span><select value={dest.name} onChange={(e) => chooseDestination(e.target.value)}><option value="__search__">Search any place...</option>{!PLACES.some((p) => p.name === dest.name) && <option>{dest.name}</option>}{PLACES.map((p) => <option key={p.name}>{p.name}</option>)}</select></div>}{destinationMode && geoResults.length > 0 && <div className="geo-results">{geoResults.map((p) => <button key={p.name + p.latitude} type="button" onClick={() => pickDestination(p)}>{p.name}</button>)}</div>}{destinationMode && <small className="muted destination-note">Press Enter to search, or click the map to drop a destination pin.</small>}</label><label className="departure"><span>Depart at</span><div className="field"><span className="field-icon">◷</span><select value={departMode} onChange={(e) => setDepartMode(e.target.value)}><option>Now</option><option value="Custom">Custom time</option></select>{departMode === 'Custom' && <input type="time" className="depart-time" value={departTime} onChange={(e) => setDepartTime(e.target.value)} />}</div></label><button className="find-button" onClick={search} disabled={busy || Boolean(jid)}>{busy ? 'Finding…' : jid ? 'Route active' : (originMode || destinationMode) ? 'Search place' : 'Find Safe Routes'} <span>→</span></button></div>
         {departAt && <DepartCompare route={activeRoute} time={departAt} preference={preference} minEta={minEta} />}<div className="preference"><span className="preference-icon">✦</span><div><b>Safety-Time Preference</b><small>Adjust how much you want to prioritise safety vs faster travel.</small></div><div className="preference-control"><span>Faster Travel</span><input type="range" min="0" max="100" value={preference} onChange={(e) => changePreference(e.target.value)} /><span>Safer Travel</span><div className="preference-labels"><small>Shorter time, higher risk</small><strong>{preference < 40 ? 'Faster Travel' : preference > 60 ? 'Safer Travel' : 'Balanced (Recommended)'}</strong><small>May take longer, higher safety</small></div></div></div>
       </section>
       {err && <ErrorState message={err} />}{busy && <LoadingState text="Finding real road routes…" />}
