@@ -19,6 +19,18 @@ const safePointsFor = (route, center) => {
   return SAFE_KINDS.map(([name, kind], n) => { const p = g[Math.floor((g.length - 1) * (n + 1) / (SAFE_KINDS.length + 1))]; const o = (n % 2 ? 1 : -1) * .0012; return { name: `${name} ${n + 1}`, kind, latitude: p[0] + o, longitude: p[1] - o } })
 }
 
+const bestRouteId = (list, preferenceValue) => {
+  const usable = (list || []).filter((route) => route?.eta_min > 0)
+  if (!usable.length) return list?.[0]?.id
+  const fastest = Math.min(...usable.map((route) => route.eta_min))
+  return [...usable].sort((a, b) => {
+    const score = (route) => routeScore(route.safety, speedScore(route, fastest), preferenceValue)
+    const diff = score(b) - score(a)
+    if (diff) return diff
+    return a.eta_min - b.eta_min
+  })[0].id
+}
+
 const normalizeText = (value = '') => value.toLowerCase().replace(/\s+/g, ' ').trim()
 const keywordMatch = (value = '') => KEYWORDS.some((keyword) => normalizeText(value).includes(normalizeText(keyword)))
 const classifyVoiceEmotion = (value = '') => {
@@ -364,10 +376,13 @@ export default function Home() {
   }, [pinPoint?.latitude, pinPoint?.longitude, pinSource])
   const stopRoute = async () => { if (jid) await api.stop(jid).catch(() => {}); if (watch.current !== undefined) { navigator.geolocation?.clearWatch(watch.current); watch.current = undefined } setJid(); setSt(); setGps(); setNote('Route stopped. Pick another route or destination.') }
   const minEta = routes.length ? Math.min(...routes.map((r) => r.eta_min)) : undefined
-  const pickRecommended = (list) => list.find((r) => r.recommended)?.id ?? list[0]?.id
-  const changePreference = (value) => { setPreference(Number(value)) }
+  const changePreference = (value) => {
+    const next = Number(value)
+    setPreference(next)
+    if (routes.length) setSel(bestRouteId(routes, next))
+  }
   const search = async () => { if (destinationMode) { await geocode(); return } setBusy(true); setNote(); const r = await run(() => api.search(start, dest)); setBusy(false)
-    if (r) { setRoutes(r.routes); setSel(pickRecommended(r.routes)); if (!r.routes.length) setErr('No routes found.') } }
+    if (r) { setRoutes(r.routes); setSel(bestRouteId(r.routes, preference)); if (!r.routes.length) setErr('No routes found.') } }
   const begin = async () => { const r = await run(() => api.start(sel)); if (r) { setJid(r.journey_id); refresh(r.journey_id)
     if (navigator.geolocation) watch.current = navigator.geolocation.watchPosition((p) => setGps({ latitude: p.coords.latitude, longitude: p.coords.longitude }), () => setNote('Live location is unavailable; using simulated navigation.'))
     else setNote('Live location is unavailable; using simulated navigation.') } }
@@ -617,7 +632,8 @@ export default function Home() {
   const activeRoute = st ? { id: st.route_id, geometry: st.geometry, safety: st.safety, factors: st.factors, distance_m: st.distance_m, progress_m: st.progress_m, eta_min: st.eta_min, incident_count: st.incidents_ahead.length } : selectedRoute
   const pinScoredRoute = livePoint ? { ...(activeRoute || {}), safety: livePoint.safety, factors: livePoint.factors, eta_min: activeRoute?.eta_min ?? 1 } : activeRoute
   const navItems = [{ icon: '⌂', label: 'Home' }, { icon: '⚙', label: 'Settings' }]
-  const scoredRoutes = routes.map((r) => ({ ...r, high_risk_min: highRiskExposure(r, incidents).minutes, route_score: routeScore(r.safety, speedScore(r, minEta), preference) }))
+  const chosenId = bestRouteId(routes, preference)
+  const scoredRoutes = routes.map((r) => ({ ...r, high_risk_min: highRiskExposure(r, incidents).minutes, route_score: routeScore(r.safety, speedScore(r, minEta), preference), recommended: r.id === chosenId })).sort((a, b) => b.route_score - a.route_score || a.eta_min - b.eta_min)
   const safePoints = safePointsFor(activeRoute, isEmergencyActive ? start : null)
   const departAt = departMode === 'Custom' ? departTime : undefined
   const shown = st ? [{ id: st.route_id, geometry: st.geometry }] : routes
