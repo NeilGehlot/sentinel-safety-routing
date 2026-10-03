@@ -742,11 +742,11 @@ export default function Home() {
     </aside>
     <main className="workspace">
       <header className="topbar"><div><span className="eyebrow">Safety-first navigation</span><h1>{jid ? 'Live journey' : 'Safe route planner'}</h1></div><div className="top-actions"><span className="status-chip"><span className="live-dot" />{jid ? 'Journey active' : 'Ready to plan'}</span><button type="button" className="sos-top-button" onClick={triggerTopBarSos} disabled={isEmergencyActive} title="Send manual SOS">SOS</button><button type="button" className="icon-button" onClick={() => setFakeCallActive(true)} title="Quick dial" aria-label="Quick dial"><Phone size={16} /></button><button className="icon-button">?</button></div></header>
-      {isEmergencyActive && <div className="traveler-sos-banner" role="status">SOS triggered, check email for guardian/SOS dashboard.</div>}
       <section className="panel sos-panel">
         <div className="panel-heading">
           <div><span className="eyebrow">04 · Intelligent SOS</span><h2>Safety monitor</h2></div>
         </div>
+        {isEmergencyActive && <div className="traveler-sos-banner" role="status">SOS triggered, check email for guardian/SOS dashboard.</div>}
         {!sosJourney && <button className="sos-button sos-button-primary" onClick={startSafetyJourney}>Activate safety monitor</button>}
         {sosJourney && <div className="sos-panel-body">
           <div className="sos-header">
@@ -758,7 +758,6 @@ export default function Home() {
           </div>
 
           {sosStatus?.countdown_required && <div className="alert"><strong>POSSIBLE EMERGENCY DETECTED</strong><p className="muted">Are you safe? Automatic SOS in {sosStatus.countdown_seconds}s</p></div>}
-          {isEmergencyActive && <div className="alert emergency-alert"><strong>SOS triggered</strong><p className="muted">Check email for guardian/SOS dashboard. Guardians have been notified and help is on the way.</p></div>}
 
           <div className="risk-display-wrap">
             <div className="risk-label">Risk score</div>
