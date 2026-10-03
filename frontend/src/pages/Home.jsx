@@ -444,8 +444,6 @@ export default function Home() {
         setSosStatus({
           ...payload,
           status: 'EMERGENCY_ACTIVE',
-          risk_score: 0,
-          risk_level: 'LOW',
           countdown_required: false,
           countdown_seconds: 0,
           sos_trigger: payload.sos_trigger || 'AUTO',
@@ -457,7 +455,7 @@ export default function Home() {
         setCountdownSeconds(0)
         countdownTriggeredRef.current = true
         setMapMode('safepoints')
-        setSosNotice('SOS ACTIVATED - Help contacted and is on the way.')
+        setSosNotice('SOS ACTIVATED. Help contacted and is on the way.')
         return
       }
       setSosStatus(payload)
@@ -494,8 +492,6 @@ export default function Home() {
       setSosStatus({
         ...payload,
         status: 'EMERGENCY_ACTIVE',
-        risk_score: 0,
-        risk_level: 'LOW',
         countdown_required: false,
         countdown_seconds: 0,
         sos_trigger: payload.sos_trigger || triggerType,
@@ -503,9 +499,7 @@ export default function Home() {
         help_alerted: payload.help_alerted,
         guardian_count: payload.guardian_count,
       })
-      setSosNotice(payload.dashboard_url
-        ? `SOS triggered, check email for guardian/SOS dashboard (${payload.dashboard_url}).`
-        : `SOS triggered, check email for guardian/SOS dashboard. Alerts sent to ${recipients}.`)
+      setSosNotice(`SOS triggered. Help contacted and is on the way. Alerts sent to ${recipients}.`)
       setCountdownOpen(false)
       setCountdownSeconds(0)
       countdownTriggeredRef.current = true

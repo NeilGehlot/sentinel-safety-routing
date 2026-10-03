@@ -213,11 +213,64 @@ def test_share_trip_and_sos_use_same_dashboard(monkeypatch):
         })
         assert emergency.status_code == 200
         eid = emergency.json()["emergency_id"]
+        assert emergency.json()["risk_score"] == 100
+        trip = c.get(f"/journeys/{started['journey_id']}/status").json()
+        assert trip["status"] == "EMERGENCY_ACTIVE"
+        assert trip["risk_score"] == 100
         dash = c.get(f"/emergencies/{eid}").json()
         same = c.get(f"/monitor/{eid}").json()
         assert dash["id"] == same["id"] == eid
         assert dash["geometry"] == same["geometry"]
         assert dash["position"]
+        assert dash["sos_active"] is True
+        assert dash["risk_score"] == 100
+        shared_live = c.get(f"/monitor/{monitor_id}").json()
+        assert shared_live["sos_active"] is True
+        assert shared_live["risk_score"] == 100
+        assert shared_live["trigger_type"] == "MANUAL"
+        keyword = c.post("/signals", json={"journey_id": started["journey_id"], "signal_type": "KEYWORD_DETECTED"})
+        assert keyword.json()["status"] == "EMERGENCY_ACTIVE"
+        assert keyword.json()["risk_score"] == 100
+        assert c.get(f"/monitor/{monitor_id}").json()["risk_score"] == 100
         assert "Live Guardian dashboard" in store.captured_emails[-1]["text"]
     finally:
         store.guardian_settings = previous_settings
+
+
+def test_share_dashboard_keeps_live_sos_risk_after_signals(monkeypatch):
+    from app.api import sos
+
+    previous_settings = store.guardian_settings
+    store.guardian_settings = {
+        "guardian_emails": ["one@example.com", "two@example.com"],
+        "location_update_interval_minutes": 5,
+        "emergency_contacts": [],
+        "emergency_profile": {},
+    }
+    monkeypatch.setattr(sos.settings, "mock_mode", True)
+    monkeypatch.setattr(sos.settings, "smtp_host", "")
+    try:
+        body = {"start": {"latitude": S[0], "longitude": S[1]}, "destination": {"latitude": D[0], "longitude": D[1]}}
+        routes = c.post("/api/routes/search", json=body).json()["routes"]
+        nav_id = c.post("/api/navigation/start", json={"route_id": routes[0]["id"]}).json()["journey_id"]
+        monitor_id = c.post("/monitor/share", json={"nav_journey_id": nav_id, "user_name": "Test User"}).json()["monitor_id"]
+        started = c.post("/journeys/start", json={"user_name": "Test User", "latitude": S[0], "longitude": S[1]}).json()
+        jid = started["journey_id"]
+        before = c.post("/signals", json={"journey_id": jid, "signal_type": "KEYWORD_DETECTED"}).json()["risk_score"]
+        emergency = c.post("/emergencies", json={
+            "journey_id": jid,
+            "trigger_type": "AUTO",
+            "latitude": S[0],
+            "longitude": S[1],
+            "nav_journey_id": nav_id,
+        }).json()
+        assert emergency["risk_score"] == before
+        after = c.post("/signals", json={"journey_id": jid, "signal_type": "FALL_DETECTED"}).json()
+        assert after["risk_score"] > before
+        live = c.get(f"/monitor/{monitor_id}").json()
+        assert live["sos_active"] is True
+        assert live["risk_score"] == after["risk_score"]
+        assert c.get(f"/journeys/{jid}/status").json()["risk_score"] == after["risk_score"]
+    finally:
+        store.guardian_settings = previous_settings
+

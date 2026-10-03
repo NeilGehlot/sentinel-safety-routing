@@ -22,6 +22,37 @@ function pickPosition(emergency) {
   return { point: null, source: null }
 }
 
+async function readJson(url) {
+  const response = await fetch(url)
+  if (response.status === 404) return null
+  if (!response.ok) throw new Error('Unable to load emergency')
+  return response.json()
+}
+
+function mergeLiveSos(monitor, emergency, journey) {
+  const base = { ...(monitor || {}), ...(emergency || {}) }
+  const trip = journey || {}
+  const riskScore = trip.risk_score ?? emergency?.risk_score ?? monitor?.risk_score
+  const sosActive = Boolean(
+    trip.status === 'EMERGENCY_ACTIVE'
+    || emergency?.sos_active
+    || monitor?.sos_active
+    || (emergency?.status === 'ACTIVE' && (emergency?.trigger_type === 'MANUAL' || emergency?.trigger_type === 'AUTO'))
+  )
+  return {
+    ...base,
+    risk_score: riskScore == null ? 0 : Number(riskScore),
+    risk_level: trip.risk_level || emergency?.risk_level || monitor?.risk_level,
+    trigger_reasons: (trip.trigger_reasons && trip.trigger_reasons.length)
+      ? trip.trigger_reasons
+      : (emergency?.trigger_reasons || monitor?.trigger_reasons || []),
+    sos_active: sosActive,
+    sos_status: trip.status || emergency?.sos_status || monitor?.sos_status,
+    journey_id: trip.journey_id || emergency?.journey_id || monitor?.journey_id,
+    sos_journey_id: monitor?.sos_journey_id || emergency?.sos_journey_id || trip.journey_id,
+  }
+}
+
 export default function GuardianDashboard() {
   const { emergencyId } = useParams()
   const [emergency, setEmergency] = useState(null)
@@ -31,16 +62,29 @@ export default function GuardianDashboard() {
     let active = true
     const load = async () => {
       try {
-        let response = await fetch(`/monitor/${emergencyId}`)
-        if (response.status === 404) {
-          response = await fetch(`/emergencies/${emergencyId}`)
-        }
-        if (response.status === 404) {
+        let monitor = await readJson(`/monitor/${emergencyId}`)
+        if (!monitor) monitor = await readJson(`/emergencies/${emergencyId}`)
+        if (!monitor) {
           if (active) setState('invalid')
           return
         }
-        if (!response.ok) throw new Error('Unable to load emergency')
-        const payload = await response.json()
+        let linkedEmergency = monitor
+        if (monitor.id && monitor.id !== emergencyId) {
+          linkedEmergency = await readJson(`/emergencies/${monitor.id}`) || monitor
+        }
+        if (monitor.sos_active || monitor.trigger_type === 'MANUAL' || monitor.trigger_type === 'AUTO') {
+          linkedEmergency = await readJson(`/emergencies/${emergencyId}`) || linkedEmergency
+        }
+        const sosJourneyId = monitor.sos_journey_id || (monitor.monitor_kind === 'emergency' ? monitor.journey_id : null)
+        let journey = null
+        if (sosJourneyId) {
+          try {
+            journey = await readJson(`/journeys/${sosJourneyId}/status`)
+          } catch {
+            journey = null
+          }
+        }
+        const payload = mergeLiveSos(monitor, linkedEmergency, journey)
         if (active) {
           setEmergency(payload)
           setState('ready')
@@ -68,7 +112,8 @@ export default function GuardianDashboard() {
   const progress = emergency.progress_m || 0
   const progressPct = distance ? Math.max(0, Math.min(100, Math.round((100 * progress) / distance))) : null
   const events = [...(emergency.events || [])].reverse()
-  const isShare = (emergency.monitor_kind === 'share') || emergency.trigger_type === 'SHARE'
+  const isShare = (emergency.monitor_kind === 'share') && !emergency.sos_active
+  const sosOn = Boolean(emergency.sos_active || emergency.sos_status === 'EMERGENCY_ACTIVE')
   const routes = hasRoute
     ? [{ id: emergency.route_id || 'live', geometry, safety: emergency.safety }]
     : []
@@ -80,14 +125,20 @@ export default function GuardianDashboard() {
 
   return (
     <main className="guardian-dashboard">
+      {sosOn && (
+        <div className="guardian-sos-banner" role="alert">
+          <strong>SOS triggered</strong>
+          <span>Live SOS risk is updating on this Guardian dashboard (the same page emailed when live location was shared).</span>
+        </div>
+      )}
       {emergency.status === 'RESOLVED' && <div className="resolved-banner">This emergency has been resolved</div>}
       {emergency.nav_status === 'completed' && <div className="resolved-banner">This trip has completed</div>}
       <header>
         <div>
-          <span className="eyebrow">{isShare ? 'Sentinel live trip' : 'Sentinel live emergency'}</span>
+          <span className="eyebrow">{sosOn ? 'Sentinel live SOS' : (isShare ? 'Sentinel live trip' : 'Sentinel live emergency')}</span>
           <h1>{emergency.user_name || 'User'}</h1>
         </div>
-        <Badge variant={emergency.status === 'RESOLVED' ? 'secondary' : 'destructive'}>{emergency.status}</Badge>
+        <Badge variant={(emergency.status === 'RESOLVED' || (emergency.status === 'SHARED' && !sosOn)) ? 'secondary' : 'destructive'}>{sosOn ? 'SOS triggered' : emergency.status}</Badge>
       </header>
       <section className="guardian-summary panel">
         <div><small>Trigger</small><strong>{emergency.trigger_type}</strong></div>
@@ -99,7 +150,7 @@ export default function GuardianDashboard() {
             : <strong>Not yet scored</strong>}
         </div>
         <div className="guardian-risk">
-          <small>SOS risk</small>
+          <small>Live SOS risk</small>
           <Badge variant="outline" className="risk-level-badge"><Num value={emergency.risk_score} risk className="score" /> {emergency.risk_level}</Badge>
         </div>
         <div>
@@ -132,7 +183,7 @@ export default function GuardianDashboard() {
             : <p className="muted">Safety factors will appear once a route is active. Historical crime is one factor, not the whole score.</p>}
         </section>
         <section className="panel">
-          <h2>{isShare ? 'Trip notes' : 'Trigger reasons'}</h2>
+          <h2>{sosOn ? 'SOS reasons' : (isShare ? 'Trip notes' : 'Trigger reasons')}</h2>
           {emergency.trigger_reasons?.length ? <ul>{emergency.trigger_reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : <p className="muted">No trigger reasons recorded</p>}
         </section>
         <section className="panel">

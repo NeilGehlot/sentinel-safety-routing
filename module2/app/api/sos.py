@@ -407,6 +407,66 @@ def _send_share_email(monitor, recipient_email):
     )
 
 
+def _sync_emergency_risk(emergency, journey=None):
+    if not emergency:
+        return
+    jid = emergency.get("journey_id")
+    trip = journey or (store.sos_journeys.get(jid) if jid else None)
+    if trip is None:
+        return
+    if trip.get("risk_score") is not None:
+        emergency["risk_score"] = int(trip.get("risk_score") or 0)
+        emergency["risk_level"] = trip.get("risk_level") or level_for_score(emergency["risk_score"])
+    if trip.get("trigger_reasons"):
+        emergency["trigger_reasons"] = list(trip["trigger_reasons"])
+    eid = emergency.get("id")
+    if eid and eid in store.monitors:
+        store.monitors[eid]["risk_score"] = emergency["risk_score"]
+        store.monitors[eid]["risk_level"] = emergency.get("risk_level")
+
+
+def _attach_sos_to_share_monitors(emergency):
+    eid = emergency.get("id")
+    nav_id = emergency.get("nav_journey_id")
+    sos_id = emergency.get("journey_id")
+    for monitor in store.monitors.values():
+        if monitor.get("monitor_kind") != "share":
+            continue
+        matches_nav = nav_id and monitor.get("nav_journey_id") == nav_id
+        matches_sos = sos_id and monitor.get("sos_journey_id") == sos_id
+        if not (matches_nav or matches_sos):
+            continue
+        monitor["emergency_id"] = eid
+        monitor["sos_journey_id"] = sos_id
+        monitor["status"] = emergency.get("status") or "ACTIVE"
+        monitor["trigger_type"] = emergency.get("trigger_type")
+        monitor["risk_score"] = emergency.get("risk_score", 0)
+        monitor["risk_level"] = emergency.get("risk_level") or "LOW"
+        monitor.setdefault("events", []).append({
+            "event_type": "SOS_TRIGGERED",
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        })
+
+
+def _linked_emergency(record):
+    eid = record.get("emergency_id")
+    if eid and eid in store.emergencies:
+        return store.emergencies[eid]
+    if record.get("id") in store.emergencies:
+        return store.emergencies[record["id"]]
+    sos_id = record.get("sos_journey_id")
+    if sos_id and sos_id in store.sos_journeys:
+        jeid = store.sos_journeys[sos_id].get("emergency_id")
+        if jeid and jeid in store.emergencies:
+            return store.emergencies[jeid]
+    nav_id = record.get("nav_journey_id")
+    if nav_id:
+        for item in store.emergencies.values():
+            if item.get("nav_journey_id") == nav_id and item.get("status") != "RESOLVED":
+                return item
+    return None
+
+
 def _monitor_record(token):
     if token in store.monitors:
         return store.monitors[token]
@@ -448,9 +508,12 @@ def _monitor_live_response(token):
             live["position"] = last
             live["last_known"] = last
             live["location_live"] = False
-    emergency = store.emergencies.get(record.get("emergency_id") or token)
+    emergency = _linked_emergency(record)
     extra_live = {k: live[k] for k in ("safety", "factors", "progress_m", "distance_m", "eta_min", "geometry", "position", "last_known", "location_live", "incidents_ahead", "route_id", "nav_status") if k in live}
+    sos_journey_id = (emergency or {}).get("journey_id") or record.get("sos_journey_id")
+    sos_trip = store.sos_journeys.get(sos_journey_id) if sos_journey_id else None
     if emergency:
+        _sync_emergency_risk(emergency, sos_trip)
         risk = compute_risk(emergency)
         latitude = live.get("latitude") if live.get("latitude") is not None else emergency.get("latitude")
         longitude = live.get("longitude") if live.get("longitude") is not None else emergency.get("longitude")
@@ -458,27 +521,33 @@ def _monitor_live_response(token):
             emergency["latitude"] = live["latitude"]
             emergency["longitude"] = live["longitude"]
             emergency["last_known"] = live.get("last_known") or {"latitude": live["latitude"], "longitude": live["longitude"]}
+        sos_active = emergency.get("status") == "ACTIVE" or (sos_trip or {}).get("status") == "EMERGENCY_ACTIVE"
         return EmergencyResponse(
             id=token,
             journey_id=emergency.get("journey_id") or record.get("sos_journey_id") or "",
             trigger_type=emergency.get("trigger_type") or "MANUAL",
-            user_name=emergency.get("user_name"),
+            user_name=emergency.get("user_name") or record.get("user_name"),
             latitude=latitude,
             longitude=longitude,
             accuracy=emergency.get("accuracy"),
             created_at=emergency["created_at"],
             status=emergency["status"],
-            events=list(emergency.get("events", [])),
+            events=list(emergency.get("events") or []) + list(record.get("events") or []),
             nav_journey_id=record.get("nav_journey_id"),
-            monitor_kind="emergency",
+            sos_journey_id=sos_journey_id,
+            sos_active=bool(sos_active),
+            sos_status=(sos_trip or {}).get("status") or emergency.get("status"),
+            monitor_kind=record.get("monitor_kind") or "emergency",
             **risk,
             **extra_live,
         )
     latitude = live.get("latitude")
     longitude = live.get("longitude")
+    sos_active = (sos_trip or {}).get("status") == "EMERGENCY_ACTIVE"
+    risk_score = int((sos_trip or record).get("risk_score") or 0) if sos_trip else int(record.get("risk_score") or 0)
     return EmergencyResponse(
         id=token,
-        journey_id=record.get("sos_journey_id") or record.get("nav_journey_id") or "",
+        journey_id=record.get("sos_journey_id") or "",
         trigger_type=record.get("trigger_type") or "SHARE",
         user_name=record.get("user_name"),
         latitude=latitude,
@@ -486,10 +555,13 @@ def _monitor_live_response(token):
         created_at=record.get("created_at") or datetime.utcnow().isoformat() + "Z",
         status=record.get("status") or live.get("nav_status") or "SHARED",
         events=list(record.get("events", [])),
-        risk_score=int(record.get("risk_score") or 0),
-        risk_level=record.get("risk_level") or "LOW",
-        trigger_reasons=list(record.get("trigger_reasons") or ["Trip shared with guardians"]),
+        risk_score=risk_score,
+        risk_level=(sos_trip or {}).get("risk_level") or record.get("risk_level") or "LOW",
+        trigger_reasons=list((sos_trip or {}).get("trigger_reasons") or record.get("trigger_reasons") or ["Trip shared with guardians"]),
         nav_journey_id=record.get("nav_journey_id"),
+        sos_journey_id=sos_journey_id,
+        sos_active=bool(sos_active),
+        sos_status=(sos_trip or {}).get("status"),
         monitor_kind=record.get("monitor_kind") or "share",
         **extra_live,
     )
@@ -611,16 +683,6 @@ def journey_status(jid: str):
 @router.post("/signals")
 def record_signal(req: SignalEventRequest):
     journey = _journey(req.journey_id)
-    if journey.get("status") == "EMERGENCY_ACTIVE" and req.signal_type != "SAFE":
-        return {
-            "journey_id": req.journey_id,
-            "risk_score": 0,
-            "risk_level": "LOW",
-            "trigger_reasons": ["SOS ACTIVATED"],
-            "countdown_required": False,
-            "countdown_seconds": 0,
-            "status": "EMERGENCY_ACTIVE",
-        }
     if req.latitude is not None:
         journey["latitude"] = req.latitude
     if req.longitude is not None:
@@ -674,13 +736,22 @@ def record_signal(req: SignalEventRequest):
     journey["risk_score"] = risk["risk_score"]
     journey["risk_level"] = risk["risk_level"]
     journey["trigger_reasons"] = risk["trigger_reasons"]
+    eid = journey.get("emergency_id")
+    if eid and eid in store.emergencies:
+        _sync_emergency_risk(store.emergencies[eid], journey)
     if journey.get("status") == "EMERGENCY_ACTIVE":
         journey["countdown_required"] = False
         journey["countdown_seconds"] = 0
-        journey["risk_score"] = 0
-        journey["risk_level"] = "LOW"
-        journey["trigger_reasons"] = ["SOS ACTIVATED"]
-        return {"journey_id": req.journey_id, "risk_score": 0, "risk_level": "LOW", "trigger_reasons": ["SOS ACTIVATED"], "countdown_required": False, "countdown_seconds": 0, "status": "EMERGENCY_ACTIVE"}
+        return {
+            "journey_id": req.journey_id,
+            "risk_score": risk["risk_score"],
+            "risk_level": risk["risk_level"],
+            "trigger_reasons": risk["trigger_reasons"],
+            "countdown_required": False,
+            "countdown_seconds": 0,
+            "status": "EMERGENCY_ACTIVE",
+            "emergency_id": eid,
+        }
     if risk["risk_score"] >= 60:
         journey["countdown_required"] = True
         journey["countdown_seconds"] = settings.safety_countdown_seconds
@@ -737,8 +808,13 @@ def create_emergency(req: EmergencyCreateRequest, request: Request):
     }
     journey["emergency_id"] = eid
     journey["status"] = "EMERGENCY_ACTIVE"
-    _reset_journey_risk_window(journey)
-    journey["trigger_reasons"] = ["SOS ACTIVATED"]
+    journey["risk_score"] = trigger_score
+    journey["risk_level"] = level_for_score(trigger_score)
+    journey["countdown_required"] = False
+    journey["countdown_seconds"] = 0
+    journey["trigger_reasons"] = ["Manual SOS"] if req.trigger_type == "MANUAL" else list(journey.get("trigger_reasons") or ["SOS ACTIVATED"])
+    emergency["trigger_reasons"] = list(journey["trigger_reasons"])
+    _attach_sos_to_share_monitors(emergency)
     guardian_emails = _guardian_emails()
     email_results = [_send_alert_email(emergency, email) for email in guardian_emails]
     email_status = (
@@ -757,11 +833,11 @@ def create_emergency(req: EmergencyCreateRequest, request: Request):
         "emergency_id": eid,
         "dashboard_url": dashboard_url,
         "status": "EMERGENCY_ACTIVE",
-        "risk_score": 0,
-        "risk_level": "LOW",
+        "risk_score": trigger_score,
+        "risk_level": level_for_score(trigger_score),
         "countdown_required": False,
         "countdown_seconds": 0,
-        "trigger_reasons": ["SOS ACTIVATED"],
+        "trigger_reasons": emergency["trigger_reasons"],
         "sos_trigger": req.trigger_type,
         "help_alerted": email_status in {"sent", "partial"},
         "email_status": email_status,

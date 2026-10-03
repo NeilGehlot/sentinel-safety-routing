@@ -121,6 +121,9 @@ class EmergencyResponse(BaseModel):
     route_id: Optional[str] = None
     nav_status: Optional[str] = None
     nav_journey_id: Optional[str] = None
+    sos_journey_id: Optional[str] = None
+    sos_active: bool = False
+    sos_status: Optional[str] = None
     monitor_kind: str = "emergency"
 
 class EmergencyContactEntry(BaseModel):
