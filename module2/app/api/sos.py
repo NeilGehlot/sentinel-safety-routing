@@ -1,4 +1,5 @@
 import base64
+import html as html_lib
 import io
 import logging
 import smtplib
@@ -18,7 +19,8 @@ from app.config import (
     KEYWORD_WINDOW_CAP,
     settings,
 )
-from app.models.schemas import AssistantAskRequest, EmergencyCreateRequest, EmergencyResolveRequest, EmergencyResponse, GuardianSettingsRequest, SignalEventRequest, SosJourneyStartRequest
+from app.models.schemas import AssistantAskRequest, EmergencyCreateRequest, EmergencyResolveRequest, EmergencyResponse, GuardianSettingsRequest, ShareTripRequest, SignalEventRequest, SosJourneyStartRequest
+from app.services import navigation_service as nav
 from app.services import store
 from app.services.assistant import ask as ask_safety_assistant, compose_context, provider_status
 from app.services.risk_engine import compute_risk, level_for_score, update_risk
@@ -185,69 +187,178 @@ def _frontend_base_url(preferred: str | None = None) -> str:
     return f"{scheme}://{lan}:{port}"
 
 
-def _send_alert_email(emergency, recipient_email):
+def _coords_from_geometry(geometry):
+    if not geometry:
+        return None
+    pt = geometry[0]
+    if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+        return {"latitude": float(pt[0]), "longitude": float(pt[1]), "source": "route_start"}
+    return None
+
+
+def _live_trip_fields(nav_journey_id):
+    # LIVE_PATH_LASTKNOWN: Guardian map uses journey position when browser GPS is missing.
+    if not nav_journey_id or nav_journey_id not in store.journeys:
+        return {}
+    snapshot = nav.status(nav_journey_id)
+    position = snapshot.get("position") or {}
+    geometry = snapshot.get("geometry") or []
+    live = bool(position.get("latitude") is not None and position.get("longitude") is not None)
+    if not live:
+        position = _coords_from_geometry(geometry) or {}
+    else:
+        position = {**position, "source": position.get("source") or "journey"}
+    journey = store.journeys[nav_journey_id]
+    if position.get("latitude") is not None:
+        journey["last_known"] = {
+            "latitude": position["latitude"],
+            "longitude": position["longitude"],
+            "source": position.get("source") or "journey",
+        }
+    last_known = journey.get("last_known") or position
+    return {
+        "nav_journey_id": nav_journey_id,
+        "safety": snapshot.get("safety"),
+        "factors": snapshot.get("factors") or {},
+        "progress_m": snapshot.get("progress_m"),
+        "distance_m": snapshot.get("distance_m"),
+        "eta_min": snapshot.get("eta_min"),
+        "geometry": geometry,
+        "position": position or last_known,
+        "last_known": last_known,
+        "location_live": live,
+        "incidents_ahead": snapshot.get("incidents_ahead") or [],
+        "route_id": snapshot.get("route_id"),
+        "nav_status": snapshot.get("status"),
+        "latitude": (position or last_known or {}).get("latitude"),
+        "longitude": (position or last_known or {}).get("longitude"),
+    }
+
+
+def _progress_pct(fields):
+    distance = fields.get("distance_m") or 0
+    progress = fields.get("progress_m") or 0
+    if not distance:
+        return None
+    return max(0, min(100, round(100.0 * progress / distance, 1)))
+
+
+def _dashboard_email_bodies(payload, dashboard_link, kind):
+    """Plain text plus HTML that mirrors the Guardian dashboard layout."""
+    lat = payload.get("latitude")
+    lon = payload.get("longitude")
+    map_url = "unavailable" if lat is None or lon is None else f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=17/{lat}/{lon}"
+    profile = store.guardian_settings.get("emergency_profile", {})
+    address = (profile.get("address") or "Address not provided").strip() or "Address not provided"
+    blood_type = (profile.get("blood_type") or "Not provided").strip() or "Not provided"
+    emergency_contacts = store.guardian_settings.get("emergency_contacts") or []
+    contacts_text = "\n".join(
+        f"- {item.get('label', 'Contact')}: {item.get('number', 'N/A')}"
+        for item in emergency_contacts if item.get("number")
+    ) or "- No emergency contacts configured"
+    safety = payload.get("safety")
+    factors = payload.get("factors") or {}
+    factor_lines = "\n".join(f"- {name}: {value}" for name, value in factors.items()) or "- Not yet scored"
+    pct = _progress_pct(payload)
+    headline = "URGENT SOS ALERT" if kind == "sos" else "TRIP SHARE"
+    lead = (
+        "This is an emergency notification. Open the same Guardian dashboard used in the app for live tracking and safety."
+        if kind == "sos"
+        else "A traveler shared this trip with you. Open the Guardian dashboard to watch the live route, progress, and safety score."
+    )
+    text = (
+        f"{headline}\n\n"
+        f"{lead}\n\n"
+        f"User: {payload.get('user_name', 'User')}\n"
+        f"Status: {payload.get('status', '')}\n"
+        f"Trigger: {payload.get('trigger_type', 'SHARE')}\n"
+        f"SOS risk score: {payload.get('risk_score', 0)} ({payload.get('risk_level', 'LOW')})\n"
+        f"Route safety score: {safety if safety is not None else 'unavailable'} (higher is safer; crime is one factor)\n"
+        f"Progress: {pct if pct is not None else 'unavailable'}%\n"
+        f"ETA: {payload.get('eta_min', 'unavailable')} min\n"
+        f"Time: {payload.get('created_at')}\n\n"
+        "Safety factors:\n"
+        f"{factor_lines}\n\n"
+        "Current location:\n"
+        f"Latitude: {lat if lat is not None else 'unavailable'}\n"
+        f"Longitude: {lon if lon is not None else 'unavailable'}\n"
+        f"Map link: {map_url}\n"
+        f"Live Guardian dashboard: {dashboard_link}\n\n"
+        f"Address: {address}\n"
+        f"Blood type: {blood_type}\n\n"
+        "Emergency contact numbers:\n"
+        f"{contacts_text}\n"
+    )
+    esc = html_lib.escape
+    factor_rows = "".join(
+        f"<tr><td>{esc(str(name))}</td><td>{esc(str(value))}</td></tr>"
+        for name, value in factors.items()
+    ) or "<tr><td colspan='2'>Not yet scored</td></tr>"
+    html = f"""<!DOCTYPE html>
+<html><body style="font-family:Arial,sans-serif;color:#1d2440;background:#f5f7fc;padding:16px">
+  <div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid #e5e8f2;border-radius:12px;padding:20px">
+    <p style="letter-spacing:.08em;text-transform:uppercase;color:#8991aa;font-size:11px;margin:0">Sentinel live tracking</p>
+    <h1 style="margin:6px 0 12px">{esc(str(payload.get('user_name') or 'User'))}</h1>
+    <p style="background:#ffeaec;color:#b7283c;padding:10px;border-radius:8px;font-weight:700">{esc(headline)}</p>
+    <p>{esc(lead)}</p>
+    <table style="width:100%;border-collapse:collapse">
+      <tr><td>Status</td><td><strong>{esc(str(payload.get('status') or ''))}</strong></td></tr>
+      <tr><td>Trigger</td><td>{esc(str(payload.get('trigger_type') or 'SHARE'))}</td></tr>
+      <tr><td>SOS risk</td><td>{esc(str(payload.get('risk_score', 0)))} {esc(str(payload.get('risk_level') or ''))}</td></tr>
+      <tr><td>Route safety</td><td>{esc(str(safety if safety is not None else 'unavailable'))} / 100 (higher is safer)</td></tr>
+      <tr><td>Progress</td><td>{esc(str(pct if pct is not None else 'unavailable'))}%</td></tr>
+      <tr><td>ETA</td><td>{esc(str(payload.get('eta_min', 'unavailable')))} min</td></tr>
+    </table>
+    <h2 style="font-size:16px">Safety factors</h2>
+    <table style="width:100%;border-collapse:collapse">{factor_rows}</table>
+    <p>Location: {esc(str(lat if lat is not None else 'unavailable'))}, {esc(str(lon if lon is not None else 'unavailable'))}</p>
+    <p><a href="{esc(dashboard_link)}" style="display:inline-block;background:#c41220;color:#fff;padding:12px 18px;border-radius:8px;text-decoration:none;font-weight:700">Open live Guardian dashboard</a></p>
+    <p style="color:#77809a;font-size:12px">This email is a snapshot. The dashboard at the link above is the same Guardian page in the app and updates live.</p>
+  </div>
+</body></html>"""
+    return text, html, dashboard_link
+
+
+def _deliver_guardian_email(subject, text, html, recipient_email, extra=None):
+    extra = extra or {}
+    captured = {
+        "recipient": recipient_email,
+        "subject": subject,
+        "text": text,
+        "html": html,
+        **extra,
+    }
+    store.captured_emails.append(captured)
+    logger.info("Guardian email captured for %s subject=%s", recipient_email, subject)
+
     host = settings.smtp_host
     port = settings.smtp_port
     user = settings.smtp_username
     password = settings.smtp_password
     from_addr = settings.smtp_from
-    base_url = emergency.get("public_origin") or _frontend_base_url()
+    smtp_ready = all([host, port, user, password, from_addr])
 
-    if not all([host, port, user, password, from_addr]):
+    if not recipient_email:
+        return {"success": False, "error": "No valid guardian email configured.", "recipient": recipient_email, "captured": True}
+
+    if not smtp_ready:
+        ok = bool(settings.mock_mode)
         return {
-            "success": False,
-            "error": "SMTP not configured. Add SMTP_HOST/PORT/USERNAME/PASSWORD and SMTP_FROM (or EMAIL_* equivalents) in the backend environment before sending guardian emails.",
+            "success": ok,
+            "captured": True,
+            "error": None if ok else "SMTP not configured. Add SMTP_HOST/PORT/USERNAME/PASSWORD and SMTP_FROM (or EMAIL_* equivalents). Body captured for demo.",
             "recipient": recipient_email,
         }
-
-    recipient = recipient_email
-    if not recipient:
-        return {
-            "success": False,
-            "error": "No valid guardian email configured for SOS alerts.",
-            "recipient": recipient_email,
-        }
-    port_int = int(port)
 
     try:
         msg = EmailMessage()
-        msg["Subject"] = "URGENT: SOS ALERT - Immediate Assistance Needed"
+        msg["Subject"] = subject
         msg["From"] = from_addr
-        msg["To"] = recipient
+        msg["To"] = recipient_email
         msg["Reply-To"] = from_addr
-
-        lat = emergency.get("latitude")
-        lon = emergency.get("longitude")
-        profile = store.guardian_settings.get("emergency_profile", {})
-        address = (profile.get("address") or "Address not provided").strip() or "Address not provided"
-        blood_type = (profile.get("blood_type") or "Not provided").strip() or "Not provided"
-        emergency_contacts = store.guardian_settings.get("emergency_contacts") or []
-        contacts_text = "\n".join(
-            f"- {item.get('label', 'Contact')}: {item.get('number', 'N/A')}"
-            for item in emergency_contacts if item.get("number")
-        ) or "- No emergency contacts configured"
-        map_url = "unavailable" if lat is None or lon is None else f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=17/{lat}/{lon}"
-        dashboard_link = f"{base_url}/dashboard/{emergency['id']}"
-        body = (
-            "URGENT SOS ALERT\n\n"
-            "This is an emergency notification. Please act immediately.\n\n"
-            f"User: {emergency.get('user_name', 'User')}\n"
-            f"Trigger: {emergency.get('trigger_type', 'AUTO')}\n"
-            f"Risk Score: {emergency.get('risk_score', 0)}\n"
-            f"Time: {emergency.get('created_at')}\n\n"
-            "Current location:\n"
-            f"Latitude: {lat if lat is not None else 'unavailable'}\n"
-            f"Longitude: {lon if lon is not None else 'unavailable'}\n"
-            f"Map link: {map_url}\n"
-            f"Live dashboard: {dashboard_link}\n\n"
-            f"Address: {address}\n"
-            f"Blood type: {blood_type}\n\n"
-            "Emergency contact numbers:\n"
-            f"{contacts_text}\n\n"
-            "Please contact the user immediately and if necessary call local emergency services."
-        )
-        msg.set_content(body)
-
+        msg.set_content(text)
+        msg.add_alternative(html, subtype="html")
+        port_int = int(port)
         if port_int == 465:
             with smtplib.SMTP_SSL(host, port_int) as smtp:
                 smtp.login(user, password)
@@ -258,9 +369,130 @@ def _send_alert_email(emergency, recipient_email):
                     smtp.starttls()
                 smtp.login(user, password)
                 smtp.send_message(msg)
-        return {"success": True, "recipient": recipient}
+        return {"success": True, "captured": True, "recipient": recipient_email}
     except Exception as exc:  # pragma: no cover - network config only
-        return {"success": False, "error": str(exc), "recipient": recipient}
+        return {"success": bool(settings.mock_mode), "captured": True, "error": str(exc), "recipient": recipient_email}
+
+
+def _send_alert_email(emergency, recipient_email):
+    base_url = emergency.get("public_origin") or _frontend_base_url()
+    dashboard_link = f"{base_url}/dashboard/{emergency['id']}"
+    live = _live_trip_fields(emergency.get("nav_journey_id"))
+    payload = {**emergency, **{k: v for k, v in live.items() if v is not None or k in {"factors", "geometry", "incidents_ahead"}}}
+    if live.get("latitude") is not None:
+        payload["latitude"] = live["latitude"]
+        payload["longitude"] = live["longitude"]
+    text, html, dashboard_link = _dashboard_email_bodies(payload, dashboard_link, "sos")
+    return _deliver_guardian_email(
+        "URGENT: SOS ALERT - Immediate Assistance Needed",
+        text,
+        html,
+        recipient_email,
+        extra={"kind": "sos", "dashboard_url": dashboard_link, "monitor_id": emergency["id"]},
+    )
+
+
+def _send_share_email(monitor, recipient_email):
+    base_url = monitor.get("public_origin") or _frontend_base_url()
+    dashboard_link = f"{base_url}/dashboard/{monitor['id']}"
+    live = _live_trip_fields(monitor.get("nav_journey_id"))
+    payload = {**monitor, **live}
+    text, html, dashboard_link = _dashboard_email_bodies(payload, dashboard_link, "share")
+    return _deliver_guardian_email(
+        "Sentinel trip share: live Guardian dashboard",
+        text,
+        html,
+        recipient_email,
+        extra={"kind": "share", "dashboard_url": dashboard_link, "monitor_id": monitor["id"]},
+    )
+
+
+def _monitor_record(token):
+    if token in store.monitors:
+        return store.monitors[token]
+    if token in store.emergencies:
+        emergency = store.emergencies[token]
+        return {
+            "id": token,
+            "monitor_kind": "emergency",
+            "emergency_id": token,
+            "nav_journey_id": emergency.get("nav_journey_id"),
+            "sos_journey_id": emergency.get("journey_id"),
+            "user_name": emergency.get("user_name"),
+            "public_origin": emergency.get("public_origin"),
+            "created_at": emergency.get("created_at"),
+            "status": emergency.get("status"),
+            "trigger_type": emergency.get("trigger_type"),
+            "risk_score": emergency.get("risk_score", 0),
+            "risk_level": emergency.get("risk_level", "LOW"),
+        }
+    return None
+
+
+def _monitor_live_response(token):
+    record = _monitor_record(token)
+    if record is None:
+        raise HTTPException(404, "Unknown monitor")
+    live = _live_trip_fields(record.get("nav_journey_id"))
+    if not live:
+        live = {
+            k: record[k]
+            for k in ("safety", "factors", "progress_m", "distance_m", "eta_min", "geometry", "position", "last_known", "incidents_ahead", "route_id", "nav_status", "latitude", "longitude")
+            if k in record and record[k] is not None
+        }
+    if live.get("latitude") is None:
+        last = record.get("last_known") or {}
+        if last.get("latitude") is not None:
+            live["latitude"] = last["latitude"]
+            live["longitude"] = last["longitude"]
+            live["position"] = last
+            live["last_known"] = last
+            live["location_live"] = False
+    emergency = store.emergencies.get(record.get("emergency_id") or token)
+    extra_live = {k: live[k] for k in ("safety", "factors", "progress_m", "distance_m", "eta_min", "geometry", "position", "last_known", "location_live", "incidents_ahead", "route_id", "nav_status") if k in live}
+    if emergency:
+        risk = compute_risk(emergency)
+        latitude = live.get("latitude") if live.get("latitude") is not None else emergency.get("latitude")
+        longitude = live.get("longitude") if live.get("longitude") is not None else emergency.get("longitude")
+        if live.get("latitude") is not None:
+            emergency["latitude"] = live["latitude"]
+            emergency["longitude"] = live["longitude"]
+            emergency["last_known"] = live.get("last_known") or {"latitude": live["latitude"], "longitude": live["longitude"]}
+        return EmergencyResponse(
+            id=token,
+            journey_id=emergency.get("journey_id") or record.get("sos_journey_id") or "",
+            trigger_type=emergency.get("trigger_type") or "MANUAL",
+            user_name=emergency.get("user_name"),
+            latitude=latitude,
+            longitude=longitude,
+            accuracy=emergency.get("accuracy"),
+            created_at=emergency["created_at"],
+            status=emergency["status"],
+            events=list(emergency.get("events", [])),
+            nav_journey_id=record.get("nav_journey_id"),
+            monitor_kind="emergency",
+            **risk,
+            **extra_live,
+        )
+    latitude = live.get("latitude")
+    longitude = live.get("longitude")
+    return EmergencyResponse(
+        id=token,
+        journey_id=record.get("sos_journey_id") or record.get("nav_journey_id") or "",
+        trigger_type=record.get("trigger_type") or "SHARE",
+        user_name=record.get("user_name"),
+        latitude=latitude,
+        longitude=longitude,
+        created_at=record.get("created_at") or datetime.utcnow().isoformat() + "Z",
+        status=record.get("status") or live.get("nav_status") or "SHARED",
+        events=list(record.get("events", [])),
+        risk_score=int(record.get("risk_score") or 0),
+        risk_level=record.get("risk_level") or "LOW",
+        trigger_reasons=list(record.get("trigger_reasons") or ["Trip shared with guardians"]),
+        nav_journey_id=record.get("nav_journey_id"),
+        monitor_kind=record.get("monitor_kind") or "share",
+        **extra_live,
+    )
 
 
 @router.get("/settings/guardians")
@@ -485,8 +717,24 @@ def create_emergency(req: EmergencyCreateRequest, request: Request):
         "public_origin": _frontend_base_url(
             req.public_origin or request.headers.get("origin") or request.headers.get("referer")
         ),
+        "nav_journey_id": req.nav_journey_id,
     }
     store.emergencies[eid] = emergency
+    store.monitors[eid] = {
+        "id": eid,
+        "monitor_kind": "emergency",
+        "emergency_id": eid,
+        "nav_journey_id": req.nav_journey_id,
+        "sos_journey_id": journey["journey_id"],
+        "user_name": emergency["user_name"],
+        "public_origin": emergency["public_origin"],
+        "created_at": emergency["created_at"],
+        "status": "ACTIVE",
+        "trigger_type": req.trigger_type,
+        "risk_score": trigger_score,
+        "risk_level": level_for_score(trigger_score),
+        "events": [],
+    }
     journey["emergency_id"] = eid
     journey["status"] = "EMERGENCY_ACTIVE"
     _reset_journey_risk_window(journey)
@@ -524,24 +772,71 @@ def create_emergency(req: EmergencyCreateRequest, request: Request):
 
 
 def _emergency_response(emergency):
-    return EmergencyResponse(
-        id=emergency["id"],
-        journey_id=emergency["journey_id"],
-        trigger_type=emergency["trigger_type"],
-        user_name=emergency.get("user_name"),
-        latitude=emergency.get("latitude"),
-        longitude=emergency.get("longitude"),
-        accuracy=emergency.get("accuracy"),
-        created_at=emergency["created_at"],
-        status=emergency["status"],
-        events=list(emergency.get("events", [])),
-        **compute_risk(emergency),
-    )
+    return _monitor_live_response(emergency["id"])
 
 
 @router.get("/emergencies/{eid}", response_model=EmergencyResponse)
 def read_emergency(eid: str):
-    return _emergency_response(_emergency(eid))
+    return _monitor_live_response(eid)
+
+
+@router.get("/monitor/{token}", response_model=EmergencyResponse)
+def read_monitor(token: str):
+    return _monitor_live_response(token)
+
+
+@router.post("/monitor/share")
+def share_trip(req: ShareTripRequest, request: Request):
+    if req.nav_journey_id not in store.journeys:
+        raise HTTPException(404, "Unknown navigation journey")
+    emails = _guardian_emails()
+    if len(emails) < 1:
+        raise HTTPException(400, "Add guardian emails in Settings before sharing a trip")
+    token = uuid.uuid4().hex[:8]
+    origin = _frontend_base_url(req.public_origin or request.headers.get("origin") or request.headers.get("referer"))
+    live = _live_trip_fields(req.nav_journey_id)
+    monitor = {
+        "id": token,
+        "monitor_kind": "share",
+        "emergency_id": None,
+        "nav_journey_id": req.nav_journey_id,
+        "sos_journey_id": req.sos_journey_id,
+        "user_name": req.user_name or "User",
+        "public_origin": origin,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "status": live.get("nav_status") or "SHARED",
+        "trigger_type": "SHARE",
+        "risk_score": 0,
+        "risk_level": "LOW",
+        "trigger_reasons": ["Trip shared with guardians"],
+        "events": [{"event_type": "TRIP_SHARED", "created_at": datetime.utcnow().isoformat() + "Z"}],
+        "latitude": live.get("latitude"),
+        "longitude": live.get("longitude"),
+        "last_known": live.get("last_known") or live.get("position"),
+        "safety": live.get("safety"),
+        "factors": live.get("factors") or {},
+        "geometry": live.get("geometry") or [],
+        "progress_m": live.get("progress_m"),
+        "distance_m": live.get("distance_m"),
+    }
+    store.monitors[token] = monitor
+    email_results = [_send_share_email(monitor, email) for email in emails]
+    email_status = (
+        "sent"
+        if emails and all(result.get("success") for result in email_results)
+        else "skipped"
+        if not emails
+        else "partial"
+    )
+    dashboard_url = f"{origin}/dashboard/{token}"
+    return {
+        "monitor_id": token,
+        "dashboard_url": dashboard_url,
+        "email_status": email_status,
+        "guardian_count": len(emails),
+        "email_results": email_results,
+        "captured": any(r.get("captured") for r in email_results),
+    }
 
 
 @router.post("/emergencies/{eid}/resolve")

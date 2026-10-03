@@ -375,8 +375,9 @@ export default function Home() {
   const search = async () => { if (destinationMode) { await geocode(); return } setBusy(true); setNote(); const r = await run(() => api.search(start, dest)); setBusy(false)
     if (r) { setRoutes(r.routes); setSel(bestRouteId(r.routes, preference)); if (!r.routes.length) setErr('No routes found.') } }
   const begin = async () => { const r = await run(() => api.start(sel)); if (r) { setJid(r.journey_id); refresh(r.journey_id)
-    if (navigator.geolocation) watch.current = navigator.geolocation.watchPosition((p) => setGps({ latitude: p.coords.latitude, longitude: p.coords.longitude }), () => setNote('Live location is unavailable; using simulated navigation.'))
-    else setNote('Live location is unavailable; using simulated navigation.') } }
+    // FREEZE_SIM_WALK: pin stays at last real GPS or start; do not follow simulated st.position.
+    if (navigator.geolocation) watch.current = navigator.geolocation.watchPosition((p) => setGps({ latitude: p.coords.latitude, longitude: p.coords.longitude }), () => setNote('Live location is unavailable. Pin stays at the last started position until GPS updates.'))
+    else setNote('Live location is unavailable. Pin stays at the last started position until GPS updates.') } }
   const refresh = async (id = jid) => { const s = await run(() => api.status(id)); if (s) setSt(s) }
   useEffect(() => { if (!jid || st?.status === 'completed') return; const t = setInterval(refresh, POLL_MS); return () => clearInterval(t) }, [jid, st?.status])
   useEffect(() => { if (st?.status === 'completed' && watch.current !== undefined) { navigator.geolocation?.clearWatch(watch.current); watch.current = undefined } }, [st?.status])
@@ -475,6 +476,7 @@ export default function Home() {
       latitude: start.latitude,
       longitude: start.longitude,
       public_origin: window.location.origin,
+      nav_journey_id: jid,
     }))
     if (payload) {
       setSosStatus({
@@ -489,7 +491,9 @@ export default function Home() {
         help_alerted: payload.help_alerted,
         guardian_count: payload.guardian_count,
       })
-      setSosNotice(payload.dashboard_url ? `SOS ACTIVATED. Guardian dashboard: ${payload.dashboard_url}` : `SOS ACTIVATED - help contacted and is on the way. Alerts sent to ${recipients}.`)
+      setSosNotice(payload.dashboard_url
+        ? `SOS triggered, check email for guardian/SOS dashboard (${payload.dashboard_url}).`
+        : `SOS triggered, check email for guardian/SOS dashboard. Alerts sent to ${recipients}.`)
       setCountdownOpen(false)
       setCountdownSeconds(0)
       countdownTriggeredRef.current = true
@@ -499,6 +503,26 @@ export default function Home() {
   }
 
   const triggerManualSos = () => createEmergency('MANUAL')
+  const shareLiveDashboard = async () => {
+    // SHARE_LIVE_DASHBOARD_AFTER_START: shown only while a nav journey is active, never beside Find.
+    if (!ensureGuardiansConfigured()) return
+    if (!jid) {
+      setNote('Start the route first, then share live location with guardians.')
+      return
+    }
+    const payload = await run(() => api.shareTrip({
+      nav_journey_id: jid,
+      user_name: emergencyProfile.name || 'Traveler',
+      public_origin: window.location.origin,
+      sos_journey_id: sosJourney?.journey_id,
+    }))
+    if (payload) {
+      const captured = payload.captured ? ' Email body captured locally because SMTP is not configured.' : ''
+      setNote(payload.dashboard_url
+        ? `Live location shared. Guardians can open the same Guardian dashboard: ${payload.dashboard_url}.${captured}`
+        : `Trip share prepared for guardians.${captured}`)
+    }
+  }
   const triggerTopBarSos = async () => {
     if (!ensureGuardiansConfigured() || isEmergencyActive) return
     if (sosJourney) {
@@ -706,6 +730,7 @@ export default function Home() {
     </aside>
     <main className="workspace">
       <header className="topbar"><div><span className="eyebrow">Safety-first navigation</span><h1>{jid ? 'Live journey' : 'Safe route planner'}</h1></div><div className="top-actions"><span className="status-chip"><span className="live-dot" />{jid ? 'Journey active' : 'Ready to plan'}</span><button type="button" className="sos-top-button" onClick={triggerTopBarSos} disabled={isEmergencyActive} title="Send manual SOS">SOS</button><button type="button" className="icon-button" onClick={() => setFakeCallActive(true)} title="Quick dial" aria-label="Quick dial"><Phone size={16} /></button><button className="icon-button">?</button></div></header>
+      {isEmergencyActive && <div className="traveler-sos-banner" role="status">SOS triggered, check email for guardian/SOS dashboard.</div>}
       <section className="panel sos-panel">
         <div className="panel-heading">
           <div><span className="eyebrow">04 · Intelligent SOS</span><h2>Safety monitor</h2></div>
@@ -721,7 +746,7 @@ export default function Home() {
           </div>
 
           {sosStatus?.countdown_required && <div className="alert"><strong>POSSIBLE EMERGENCY DETECTED</strong><p className="muted">Are you safe? Automatic SOS in {sosStatus.countdown_seconds}s</p></div>}
-          {isEmergencyActive && <div className="alert emergency-alert"><strong>SOS ACTIVATED</strong><p className="muted">Emergency state active. Guardians have been notified and help is on the way.</p></div>}
+          {isEmergencyActive && <div className="alert emergency-alert"><strong>SOS triggered</strong><p className="muted">Check email for guardian/SOS dashboard. Guardians have been notified and help is on the way.</p></div>}
 
           <div className="risk-display-wrap">
             <div className="risk-label">Risk score</div>
@@ -770,8 +795,8 @@ export default function Home() {
       </section>
       {err && <ErrorState message={err} />}{busy && <LoadingState text="Finding real road routes…" />}
       <section className="dashboard-grid">
-        <div className="route-column"><div className="section-heading"><div><span className="eyebrow">Route planning</span><h2>Route Options <em>{routes.length || (jid ? 1 : 0)}</em></h2></div><select className="sort-select" defaultValue="recommended"><option value="recommended">Recommended</option></select></div>{!jid && scoredRoutes.map((r) => <RouteCard key={r.id} r={r} selected={r.id === sel} onSelect={setSel} />)}{!jid && !routes.length && <div className="empty-card"><span className="empty-icon">⌁</span><b>Find a safe route</b><p>Choose your destination and compare real road routes.</p></div>}{jid && st && <JourneyStatus s={st} />}{!jid && sel && <><SelectedRouteSummary r={selectedRoute} /><button className="start-button" onClick={begin}>START ROUTE <span>→</span></button></>}{jid && st && <><div className="journey-actions">{st.reroute && <RerouteCard rr={st.reroute} onSwitch={doSwitch} onKeep={keep} />}{!st.reroute && st.status !== 'completed' && <WhyNotCard analysis={st.reroute_analysis} />}{note && <p className="muted">{note}</p>}{!st.incidents_ahead.length && st.status !== 'completed' && <p className="muted">No incidents ahead.</p>}<button className="demo-button" onClick={inject}>Demo: inject accident 600 m ahead</button><button className="start-button stop-button" onClick={stopRoute}>{st.status === 'completed' ? 'END ROUTE' : 'STOP ROUTE'} <span>■</span></button></div></>}</div>
-        <div className="map-column"><div className="map-toolbar"><div className="map-tabs">{[['safety', '◉ Safety View'], ['safepoints', '⌖ Safe Points'], ['heatmap', '◌ Risk Heatmap'], ['time', '◷ Time Profile']].map(([k, label]) => <button type="button" key={k} className={mapMode === k ? 'active' : ''} onClick={() => setMapMode(k)}>{label}</button>)}</div><span className="map-expand">⛶</span></div><MapView routes={shown} selectedId={jid ? st?.route_id : sel} alt={st?.reroute?.alternative} incidents={st?.incidents_ahead || []} heatmapIncidents={incidents} position={gps || st?.position} start={start} dest={dest} mode={mapMode} safePoints={safePoints} onMapClick={mapClick} />{mapMode === 'time' && <div className="time-overlay panel"><TimeProfileTable route={pinScoredRoute} preference={preference} minEta={minEta} /></div>}</div>
+        <div className="route-column"><div className="section-heading"><div><span className="eyebrow">Route planning</span><h2>Route Options <em>{routes.length || (jid ? 1 : 0)}</em></h2></div><select className="sort-select" defaultValue="recommended"><option value="recommended">Recommended</option></select></div>{!jid && scoredRoutes.map((r) => <RouteCard key={r.id} r={r} selected={r.id === sel} onSelect={setSel} />)}{!jid && !routes.length && <div className="empty-card"><span className="empty-icon">⌁</span><b>Find a safe route</b><p>Choose your destination and compare real road routes.</p></div>}{jid && st && <JourneyStatus s={st} />}{!jid && sel && <><SelectedRouteSummary r={selectedRoute} /><button className="start-button" onClick={begin}>START ROUTE <span>→</span></button></>}{jid && st && <><div className="journey-actions">{st.reroute && <RerouteCard rr={st.reroute} onSwitch={doSwitch} onKeep={keep} />}{!st.reroute && st.status !== 'completed' && <WhyNotCard analysis={st.reroute_analysis} />}{note && <p className="muted">{note}</p>}{!st.incidents_ahead.length && st.status !== 'completed' && <p className="muted">No incidents ahead.</p>}<button type="button" className="share-live-dashboard-button" data-share-after-start="1" onClick={shareLiveDashboard} title="Email guardians a live Guardian dashboard link">Share live location</button><button className="demo-button" onClick={inject}>Demo: inject accident 600 m ahead</button><button className="start-button stop-button" onClick={stopRoute}>{st.status === 'completed' ? 'END ROUTE' : 'STOP ROUTE'} <span>■</span></button></div></>}</div>
+        <div className="map-column"><div className="map-toolbar"><div className="map-tabs">{[['safety', '◉ Safety View'], ['safepoints', '⌖ Safe Points'], ['heatmap', '◌ Risk Heatmap'], ['time', '◷ Time Profile']].map(([k, label]) => <button type="button" key={k} className={mapMode === k ? 'active' : ''} onClick={() => setMapMode(k)}>{label}</button>)}</div><span className="map-expand">⛶</span></div><MapView routes={shown} selectedId={jid ? st?.route_id : sel} alt={st?.reroute?.alternative} incidents={st?.incidents_ahead || []} heatmapIncidents={incidents} position={gps || (jid ? start : undefined)} start={start} dest={dest} mode={mapMode} safePoints={safePoints} onMapClick={mapClick} />{mapMode === 'time' && <div className="time-overlay panel"><TimeProfileTable route={pinScoredRoute} preference={preference} minEta={minEta} /></div>}</div>
         <div className="intel-column"><SafetyProfile route={pinScoredRoute} preference={preference} minEta={minEta} livePoint={livePoint} /><SafePointPanel route={activeRoute} points={safePoints} /><IndependencePanel routes={routes} incidents={incidents} /><IncidentSummary incidents={incidents} /></div>
       </section>
       <AnalysisPanel route={activeRoute} incidents={incidents} analysis={st?.reroute_analysis} />

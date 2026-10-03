@@ -120,6 +120,8 @@ SMTP_FROM=your-email@gmail.com
 
 Leave `FRONTEND_BASE_URL` as `http://localhost:5173` during a same-network demo. The API rewrites that localhost default to this machine's network address and port when it builds the guardian link, so a phone on the same network can open it. Set `FRONTEND_BASE_URL` to a public `https://` origin only when the site is actually hosted there.
 
+Share-trip and SOS emails use the same Guardian dashboard URL (`/dashboard/<id>`). After START ROUTE, Home shows Share live location; it posts `/monitor/share`. If SMTP is missing, `MOCK_MODE=true` still builds the email HTML, logs it, and stores it in memory so the demo can continue. Guardian emails come from Settings (`guardian_emails`). When browser GPS is off, the dashboard uses last-known from the navigation journey position.
+
 ```bash
 cd module2
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
